@@ -1,19 +1,8 @@
-import { pdfjsLib } from '@/lib/pdfjs-setup';
 import type { SupplierLineItem, SupplierQuote } from '@/types';
 import { parseMoedaBR, parseQuantidadeBR, uid } from '@/lib/utils';
+import { extractPdfLines, type PdfTextLine } from '@/lib/pdfText';
 
-interface TextItemPos {
-  str: string;
-  x: number;
-  y: number;
-  width: number;
-}
-
-interface TextLine {
-  y: number;
-  items: TextItemPos[];
-  text: string;
-}
+type TextLine = PdfTextLine;
 
 const RX_COL_DESC = /descri[çc][aã]o|produto|material|item/i;
 const RX_COL_QTD = /qtd|quant|qntd/i;
@@ -24,29 +13,7 @@ const RX_COL_VAL_TOT = /v[\.\s]*total|pre[çc]o\s*total|valor\s*total|subtotal|t
 const RX_IGNORE = /^(p[áa]gina|page|cnpj|cep|telefone|tel|fax|email|e-mail|endere[çc]o|forma\s*de\s*pagamento|prazo|validade|observa|^\s*total\s*geral|^\s*subtotal\s*$|^\s*desconto|^\s*frete)/i;
 
 export async function parsePdf(file: File): Promise<SupplierQuote> {
-  const buffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-
-  const allLines: TextLine[] = [];
-
-  for (let p = 1; p <= pdf.numPages; p++) {
-    const page = await pdf.getPage(p);
-    const content = await page.getTextContent();
-    const items: TextItemPos[] = [];
-
-    for (const it of content.items as any[]) {
-      if (!('str' in it) || !it.str?.trim()) continue;
-      items.push({
-        str: it.str,
-        x: it.transform[4],
-        y: it.transform[5],
-        width: it.width || 0,
-      });
-    }
-
-    const lines = groupByLine(items);
-    allLines.push(...lines);
-  }
+  const allLines = await extractPdfLines(file);
 
   // tentativa 1: extrair pelo cabeçalho de coluna
   const cols = detectColumns(allLines);
@@ -72,29 +39,6 @@ export async function parsePdf(file: File): Promise<SupplierQuote> {
     status: 'processing',
     items: extracted,
   };
-}
-
-function groupByLine(items: TextItemPos[], tolerance = 2.5): TextLine[] {
-  if (items.length === 0) return [];
-  // ordena por y desc (origem PDF é canto inf-esquerdo)
-  const sorted = [...items].sort((a, b) => b.y - a.y);
-  const lines: TextLine[] = [];
-
-  for (const it of sorted) {
-    const last = lines[lines.length - 1];
-    if (last && Math.abs(last.y - it.y) <= tolerance) {
-      last.items.push(it);
-    } else {
-      lines.push({ y: it.y, items: [it], text: '' });
-    }
-  }
-
-  for (const l of lines) {
-    l.items.sort((a, b) => a.x - b.x);
-    l.text = l.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim();
-  }
-
-  return lines;
 }
 
 interface ColumnsMap {

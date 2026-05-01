@@ -7,6 +7,7 @@ import { parseSupplierTextFile } from '@/parser/supplierTextParser';
 const ORDER_ACCEPT = {
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
   'application/msword': ['.doc'],
+  'application/pdf': ['.pdf'],
   'text/plain': ['.txt'],
 };
 
@@ -54,7 +55,7 @@ export function OrderUploader() {
         </div>
       ) : (
         <div className="hint">
-          Arraste ou clique para enviar <strong>.docx · .doc · .txt</strong> (UTF-8)
+          Arraste ou clique para enviar <strong>.docx · .doc · .pdf · .txt</strong>
         </div>
       )}
     </div>
