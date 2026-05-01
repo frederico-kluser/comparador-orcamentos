@@ -2,6 +2,7 @@ import mammoth from 'mammoth';
 import type { SupplierLineItem, SupplierQuote } from '@/types';
 import { parseMoedaBR, parseQuantidadeBR, uid } from '@/lib/utils';
 import { readDocAsBestEffortText, readFileAsUtf8 } from '@/lib/textIO';
+import { sanitizeText } from '@/lib/textSanitize';
 
 /**
  * Parser para orçamentos/notas de fornecedores em texto plano.
@@ -33,6 +34,7 @@ export async function parseSupplierTextFile(file: File): Promise<SupplierQuote> 
     throw new Error(`Formato não suportado: .${ext}`);
   }
 
+  rawText = sanitizeText(rawText);
   const items = extractItemsFromText(rawText);
   if (items.length === 0) {
     throw new Error(
