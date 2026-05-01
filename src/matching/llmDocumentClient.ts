@@ -1,0 +1,118 @@
+import { z } from 'zod';
+
+/**
+ * LLM em modo "uma request por documento":
+ * envia TODOS os items ainda não identificados de um fornecedor + o catálogo
+ * canônico, e recebe os matches em uma única chamada.
+ *
+ * Modelo padrão: deepseek/deepseek-v4-pro (override via VITE_OPENROUTER_MODEL).
+ */
+
+const MatchRowSchema = z.object({
+  itemId: z.string(),
+  productId: z.string().nullable(),
+  confidence: z.number().min(0).max(1),
+});
+
+const MatchResponseSchema = z.object({
+  matches: z.array(MatchRowSchema),
+});
+
+export type DocumentMatchResponse = z.infer<typeof MatchResponseSchema>;
+
+const SYSTEM_PROMPT = `Você é um assistente especializado em correspondência de produtos em orçamentos comerciais brasileiros. Sua tarefa: dada uma lista de termos de itens de um orçamento de fornecedor e uma lista de produtos canônicos da ordem de compra, decidir, para cada termo, qual produto canônico corresponde — ou null se nenhum corresponder claramente.
+
+REGRAS RÍGIDAS:
+1. Para cada itemId fornecido, você DEVE retornar exatamente um objeto em "matches" com o mesmo itemId.
+2. productId só pode ser um dos IDs do catálogo OU null. NÃO invente IDs.
+3. confidence é número de 0.0 a 1.0 refletindo sua certeza.
+4. Considere unidades, especificações técnicas (M8, 1/2", 3/4", BSP, NPT), sinônimos do comércio brasileiro e abreviações.
+5. Se o termo não tem correspondente claro, retorne productId=null com confidence baixa.
+
+FORMATO DE SAÍDA: APENAS JSON, sem texto antes ou depois, com este shape exato:
+{"matches":[{"itemId":"...","productId":"..."|null,"confidence":0.0}]}`;
+
+const LLM_AUTO_CONFIDENCE = 0.85;
+
+export async function callDocumentMatchLLM(
+  unmatchedItems: { id: string; rawTerm: string }[],
+  catalogo: { id: string; descricao: string }[]
+): Promise<DocumentMatchResponse> {
+  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+  const model = import.meta.env.VITE_OPENROUTER_MODEL || 'deepseek/deepseek-v4-pro';
+
+  if (!apiKey || apiKey.includes('xxxxxxxx')) {
+    throw new Error(
+      'VITE_OPENROUTER_API_KEY não configurada. Crie um .env com base em .env.example.'
+    );
+  }
+
+  const userMessage =
+    `CATÁLOGO (produtos canônicos da ordem de compra):\n` +
+    catalogo.map((c) => `- id: "${c.id}" | desc: "${c.descricao}"`).join('\n') +
+    `\n\nITENS DO ORÇAMENTO PARA IDENTIFICAR:\n` +
+    unmatchedItems.map((it) => `- itemId: "${it.id}" | termo: "${it.rawTerm}"`).join('\n') +
+    `\n\nResponda em JSON com {"matches":[...]} contendo um objeto por itemId acima.`;
+
+  const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': window.location.origin,
+      'X-Title': 'Comparador de Orcamentos',
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      max_tokens: Math.min(8000, 200 + unmatchedItems.length * 80),
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userMessage },
+      ],
+    }),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`OpenRouter HTTP ${resp.status}: ${errText.slice(0, 240)}`);
+  }
+
+  const data = await resp.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error('Resposta LLM vazia.');
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    const m = content.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('LLM não retornou JSON válido.');
+    parsed = JSON.parse(m[0]);
+  }
+
+  const validated = MatchResponseSchema.safeParse(parsed);
+  if (!validated.success) {
+    throw new Error('Schema de resposta LLM inválido: ' + validated.error.message);
+  }
+
+  // sanitiza: productId precisa estar no catálogo
+  const validIds = new Set(catalogo.map((c) => c.id));
+  const sentItemIds = new Set(unmatchedItems.map((u) => u.id));
+  const cleaned = validated.data.matches
+    .filter((m) => sentItemIds.has(m.itemId))
+    .map((m) => ({
+      ...m,
+      productId: m.productId && validIds.has(m.productId) ? m.productId : null,
+    }));
+
+  return { matches: cleaned };
+}
+
+export function isLLMConfigured(): boolean {
+  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+  return !!apiKey && !apiKey.includes('xxxxxxxx');
+}
+
+export const LLM_AUTO_CONFIDENCE_THRESHOLD = LLM_AUTO_CONFIDENCE;
