@@ -69,7 +69,7 @@ export async function parsePdf(file: File): Promise<SupplierQuote> {
     id: uid(),
     fileName: file.name,
     supplierName: extractSupplierName(allLines, file.name),
-    status: 'matching',
+    status: 'processing',
     items: extracted,
   };
 }

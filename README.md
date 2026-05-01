@@ -1,6 +1,6 @@
 # Comparador de Orçamentos — POC
 
-POC simples: você sobe a ordem de compra em `.docx` e PDFs de orçamentos de fornecedores; o app correlaciona os produtos (com cascata `cache → fuzzy → LLM → manual`), extrai os valores via parsing tradicional do `pdfjs-dist`, calcula totais e compara.
+Suba a **ordem de compra** (`.docx`, `.doc` ou `.txt`) e as **notas/orçamentos** dos fornecedores (`.pdf`, `.docx`, `.doc` ou `.txt`); o app correlaciona os produtos (cascata `cache → fuzzy → LLM em batch → manual`), extrai valores, calcula totais e compara.
 
 ## Rodar localmente
 
@@ -15,44 +15,73 @@ Abra `http://localhost:5173`.
 
 ## Como usar
 
-1. Arraste o `.docx` da ordem de compra no quadro da esquerda.
-   - O `.docx` deve ter uma **tabela** com colunas: `Item | Descrição | Quantidade | Unidade` (cabeçalho ajuda mas não é obrigatório).
-2. Arraste um ou vários `.pdf` de fornecedores no quadro da direita.
-3. Para cada item que o sistema não conseguiu identificar automaticamente, abre um modal: escolha qual produto da ordem corresponde — **essa escolha fica gravada no IndexedDB** e nunca mais será perguntada.
-4. Veja o comparativo no final: melhor preço por linha (verde claro) e total geral por fornecedor com 🏆 no vencedor.
+App single-page com 3 áreas (sem scroll vertical longo, navegação por abas):
+
+1. **Aba Ordem** — anexe a ordem de compra em `.docx`, `.doc` ou `.txt` (UTF-8). O app entende:
+   - tabela `[Item, Descrição, Quantidade, Unidade]` no `.docx`,
+   - texto plano nos formatos "10 un - descrição" ou "descrição - 10 un".
+2. **Aba Notas** — anexe um ou mais arquivos de fornecedores em `.pdf`, `.docx`, `.doc` ou `.txt`.
+   - Para cada documento, abre um **modal com slider** (carrossel entre os documentos).
+   - Enquanto a LLM não responde, mostra um **loader**.
+   - Quando termina:
+     - **Collapse fechado "Identificados"** — itens que sabemos por comparação direta (cache/fuzzy) ou via LLM.
+     - **Collapse aberto "Não identificados"** — cada item tem um **select com filtro/busca** entre todos os produtos da ordem; sugestões automáticas aparecem destacadas no topo.
+3. **Aba Comparação** — só desbloqueia depois que **todos** os itens de **todos** os documentos estiverem resolvidos. Mostra melhor preço por linha (verde) e total geral por fornecedor.
+
+## LLM em batch — uma request por documento
+
+O matching automático segue a cascata:
+
+1. **Cache (IndexedDB)** — matches confirmados anteriormente.
+2. **Fuzzy (Fuse.js)** — comparação direta, local.
+3. **LLM em uma única request por documento** — todos os termos não identificados de um fornecedor são enviados juntos para `deepseek/deepseek-v4-pro` (configurável em `VITE_OPENROUTER_MODEL`) via OpenRouter.
+4. **Manual** — itens que sobram vão para o select com filtro no carrossel.
+
+## UTF-8
+
+Arquivos `.txt` e `.doc` são lidos com `TextDecoder('utf-8')` explícito. O corpo da request HTTP para a LLM também envia `Content-Type: application/json; charset=utf-8` para preservar acentuação no prompt.
 
 ## Arquitetura
 
 ```
 src/
 ├── parser/
-│   ├── docxParser.ts       (mammoth.js)
-│   └── pdfParser.ts        (pdfjs-dist com detecção de colunas por coordenadas)
+│   ├── orderParser.ts          (.docx / .doc / .txt → ordem de compra)
+│   ├── supplierTextParser.ts   (.docx / .doc / .txt → orçamento de fornecedor)
+│   └── pdfParser.ts            (pdfjs-dist com detecção de colunas)
 ├── matching/
-│   ├── normalize.ts        (NFD + stopwords + ordenação de tokens)
-│   ├── llmClient.ts        (OpenRouter direto via fetch)
-│   └── orchestrator.ts     (cascata: cache → fuzzy → LLM → manual)
-├── pricing/
-│   └── calculator.ts       (decimal.js)
-├── db/
-│   └── schema.ts           (Dexie / IndexedDB)
-├── store/
-│   └── index.ts            (Zustand)
-├── components/             (FileUploader, ComparisonTable, UnmatchedItemsModal, etc.)
-└── lib/                    (utils, pdfjs-setup)
+│   ├── normalize.ts
+│   └── llmDocumentClient.ts    (OpenRouter — uma request por documento)
+├── pricing/calculator.ts       (decimal.js)
+├── db/schema.ts                (Dexie / IndexedDB cache)
+├── store/index.ts              (Zustand — estado, abas, carrossel)
+├── lib/
+│   ├── textIO.ts               (UTF-8, fallback .doc binário)
+│   ├── pdfjs-setup.ts
+│   └── utils.ts
+├── components/
+│   ├── Tabs.tsx
+│   ├── FileUploader.tsx        (Order + Notes)
+│   ├── PurchaseOrderViewer.tsx
+│   ├── SupplierQuotesGrid.tsx
+│   ├── DocumentReviewCarousel.tsx (modal com slider, loader, collapses)
+│   ├── SearchableSelect.tsx    (select com filtro)
+│   ├── ComparisonTable.tsx
+│   └── Loader.tsx
+└── styles.css                  (responsivo, mobile-first)
 ```
 
 ## Aviso de segurança
 
-⚠️ **Esta POC chama a OpenRouter direto do client** com a chave em `VITE_OPENROUTER_API_KEY`. Isso **expõe a chave** no bundle JS — é aceitável para teste local, mas **antes de subir para a Vercel**, mover a chamada para uma Vercel Serverless Function `/api/llm-match.ts` que lê `OPENROUTER_API_KEY` (sem prefixo `VITE_`) do servidor.
+⚠️ **Esta POC chama a OpenRouter direto do client** com a chave em `VITE_OPENROUTER_API_KEY`. Isso **expõe a chave** no bundle JS — aceitável para teste local, mas antes de subir para a Vercel, mover a chamada para uma Vercel Serverless Function `/api/llm-match.ts` lendo `OPENROUTER_API_KEY` do servidor.
 
 ## Stack
 
 - React 18 + Vite + TypeScript
-- mammoth (DOCX) · pdfjs-dist (PDF)
+- mammoth (DOCX) · pdfjs-dist (PDF) · TextDecoder (TXT/DOC)
 - Fuse.js (fuzzy match)
-- Dexie.js (IndexedDB)
+- Dexie.js (IndexedDB cache)
 - Zustand (state)
-- Decimal.js (cálculo monetário sem erro de ponto flutuante)
+- Decimal.js (cálculo monetário)
 - Zod (validação da resposta do LLM)
-- OpenRouter (LLM provider; modelo padrão: `google/gemini-2.5-flash-lite`)
+- OpenRouter — modelo padrão `deepseek/deepseek-v4-pro`

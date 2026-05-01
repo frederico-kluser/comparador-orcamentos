@@ -1,0 +1,265 @@
+import { useEffect, useMemo } from 'react';
+import { useStore } from '@/store';
+import type { SupplierLineItem, SupplierQuote } from '@/types';
+import { formatBRL } from '@/lib/utils';
+import { Loader } from '@/components/Loader';
+import { SearchableSelect } from '@/components/SearchableSelect';
+
+const STATUS_BADGE: Record<string, string> = {
+  parsing: 'Parseando…',
+  processing: 'Processando com LLM…',
+  awaiting_review: 'Aguardando revisão',
+  reviewed: 'Revisado',
+  error: 'Erro',
+};
+
+export function DocumentReviewCarousel() {
+  const open = useStore((s) => s.reviewOpen);
+  const close = useStore((s) => s.closeReview);
+  const setIndex = useStore((s) => s.setReviewIndex);
+  const idx = useStore((s) => s.reviewIndex);
+  const suppliers = useStore((s) => s.suppliers);
+  const order = useStore((s) => s.order);
+  const resolveItem = useStore((s) => s.resolveItem);
+  const setActiveTab = useStore((s) => s.setActiveTab);
+
+  const allReviewed = suppliers.length > 0 && suppliers.every((s) => s.status === 'reviewed');
+  const current = suppliers[idx];
+
+  // Esc fecha; setas alternam slide
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+      else if (e.key === 'ArrowLeft') setIndex(Math.max(0, idx - 1));
+      else if (e.key === 'ArrowRight') setIndex(Math.min(suppliers.length - 1, idx + 1));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, idx, suppliers.length, setIndex, close]);
+
+  if (!open || !order || !current) return null;
+
+  const goCompare = () => {
+    close();
+    setActiveTab('comparacao');
+  };
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <div className="modal-card">
+        <div className="modal-head">
+          <div style={{ minWidth: 0 }}>
+            <h3 className="modal-title">📄 {current.supplierName}</h3>
+            <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+              {current.fileName} · slide {idx + 1} de {suppliers.length}
+            </div>
+          </div>
+          <button className="btn-ghost" onClick={close} aria-label="Fechar">
+            ✕
+          </button>
+        </div>
+
+        <div className="modal-body">
+          <SlideContent supplier={current} />
+        </div>
+
+        <div className="modal-foot">
+          <button
+            className="btn"
+            disabled={idx === 0}
+            onClick={() => setIndex(Math.max(0, idx - 1))}
+          >
+            ← Anterior
+          </button>
+
+          <div className="slider-dots">
+            {suppliers.map((s, i) => {
+              const cls =
+                s.status === 'reviewed'
+                  ? 'dot dot-ok'
+                  : s.status === 'awaiting_review'
+                  ? 'dot dot-warn'
+                  : 'dot';
+              return (
+                <button
+                  key={s.id}
+                  className={cls + (i === idx ? ' active' : '')}
+                  onClick={() => setIndex(i)}
+                  aria-label={`Ir para ${s.supplierName}`}
+                  title={s.supplierName}
+                />
+              );
+            })}
+          </div>
+
+          {idx < suppliers.length - 1 ? (
+            <button
+              className="btn btn-primary"
+              onClick={() => setIndex(idx + 1)}
+            >
+              Próximo →
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              disabled={!allReviewed}
+              onClick={goCompare}
+              title={
+                allReviewed
+                  ? 'Todos resolvidos — abrir comparação'
+                  : 'Resolva todos os itens não identificados de cada documento'
+              }
+            >
+              {allReviewed ? 'Ver comparação →' : 'Faltam itens…'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- conteúdo por slide ---- */
+
+function SlideContent({ supplier }: { supplier: SupplierQuote }) {
+  const order = useStore((s) => s.order)!;
+  const resolveItem = useStore((s) => s.resolveItem);
+
+  if (supplier.status === 'parsing' || supplier.status === 'processing') {
+    return (
+      <Loader
+        large
+        label={
+          supplier.status === 'parsing'
+            ? 'Lendo o arquivo…'
+            : 'Identificando produtos com a LLM (uma request para este documento)…'
+        }
+      />
+    );
+  }
+
+  if (supplier.status === 'error') {
+    return (
+      <div className="banner-error" style={{ marginBottom: 0 }}>
+        <span>{supplier.errorMessage || 'Erro ao processar este documento.'}</span>
+      </div>
+    );
+  }
+
+  const identified = supplier.items.filter((i) => i.matchedProductId);
+  const unidentified = supplier.items.filter((i) => !i.matchedProductId);
+
+  return (
+    <div className="stack">
+      <div className="hstack" style={{ flexWrap: 'wrap' }}>
+        <span className={`badge ${supplier.status}`}>
+          {STATUS_BADGE[supplier.status]}
+        </span>
+        <span className="muted">
+          {identified.length}/{supplier.items.length} identificados
+        </span>
+      </div>
+
+      {/* Não identificados — aberto */}
+      {unidentified.length > 0 && (
+        <details className="collapse warn" open>
+          <summary>
+            ⚠️ Não identificados ({unidentified.length}) — escolha o produto correspondente
+          </summary>
+          <div className="collapse-body">
+            {unidentified.map((it) => (
+              <div key={it.id} className="ss-row">
+                <div className="ss-info">
+                  <div className="term">{it.rawTerm}</div>
+                  <div className="meta">
+                    {it.quantidade != null && <>Qtd: {it.quantidade} · </>}
+                    {it.valorUnit && <>V. unit.: {formatBRL(it.valorUnit)}</>}
+                  </div>
+                </div>
+                <SearchableSelect
+                  catalog={order.items}
+                  selectedId={null}
+                  onChange={(productId) =>
+                    resolveItem(supplier.id, it.id, productId)
+                  }
+                />
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Identificados — fechado */}
+      {identified.length > 0 && (
+        <details className={'collapse' + (unidentified.length === 0 ? ' ok' : '')}>
+          <summary>
+            ✅ Identificados ({identified.length}) — por comparação direta ou LLM
+          </summary>
+          <div className="collapse-body">
+            {identified.map((it) => (
+              <IdentifiedRow
+                key={it.id}
+                item={it}
+                supplierId={supplier.id}
+              />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {supplier.items.length === 0 && (
+        <div className="muted" style={{ padding: 24, textAlign: 'center' }}>
+          Nenhum item extraído deste documento.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IdentifiedRow({
+  item,
+  supplierId,
+}: {
+  item: SupplierLineItem;
+  supplierId: string;
+}) {
+  const order = useStore((s) => s.order)!;
+  const resolveItem = useStore((s) => s.resolveItem);
+  const product = order.items.find((p) => p.id === item.matchedProductId);
+  if (!product) return null;
+
+  return (
+    <div className="id-row">
+      <div>
+        <div style={{ fontWeight: 600 }}>{product.descricao}</div>
+        <div className="muted" style={{ fontSize: 11 }}>
+          ↳ termo no orçamento: <code>{item.rawTerm}</code>
+        </div>
+      </div>
+      <div className="src">{sourceLabel(item.matchSource)}</div>
+      <div className="hstack" style={{ gap: 6 }}>
+        <span className="price">
+          {item.valorUnit ? formatBRL(item.valorUnit) : '—'}
+        </span>
+        <button
+          className="btn-ghost"
+          onClick={() => resolveItem(supplierId, item.id, '__none__')}
+          title="Marcar como não identificado"
+        >
+          ↺
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function sourceLabel(s: SupplierLineItem['matchSource']): string {
+  switch (s) {
+    case 'cache': return '💾 cache';
+    case 'fuzzy': return '🔤 fuzzy';
+    case 'llm': return '🤖 LLM';
+    case 'manual': return '✋ manual';
+    default: return '';
+  }
+}

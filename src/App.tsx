@@ -1,77 +1,99 @@
 import { useStore } from '@/store';
-import { FileUploader } from '@/components/FileUploader';
+import { OrderUploader, NotesUploader } from '@/components/FileUploader';
 import { PurchaseOrderViewer } from '@/components/PurchaseOrderViewer';
 import { SupplierQuotesGrid } from '@/components/SupplierQuotesGrid';
-import { UnmatchedItemsModal } from '@/components/UnmatchedItemsModal';
+import { DocumentReviewCarousel } from '@/components/DocumentReviewCarousel';
 import { ComparisonTable } from '@/components/ComparisonTable';
-import { isLLMConfigured } from '@/matching/llmClient';
+import { Tabs } from '@/components/Tabs';
+import { isLLMConfigured } from '@/matching/llmDocumentClient';
 
 export default function App() {
   const error = useStore((s) => s.globalError);
   const setError = useStore((s) => s.setError);
+  const tab = useStore((s) => s.activeTab);
+  const order = useStore((s) => s.order);
+  const suppliers = useStore((s) => s.suppliers);
+  const openReview = useStore((s) => s.openReview);
+  const setActiveTab = useStore((s) => s.setActiveTab);
+
   const llmOk = isLLMConfigured();
+  const allReviewed =
+    suppliers.length > 0 && suppliers.every((s) => s.status === 'reviewed');
 
   return (
-    <div
-      style={{
-        maxWidth: 1200,
-        margin: '0 auto',
-        padding: 24,
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        color: '#222',
-      }}
-    >
-      <header style={{ marginBottom: 16 }}>
-        <h1 style={{ margin: 0 }}>Comparador de Orçamentos</h1>
-        <p style={{ color: '#666', margin: '4px 0' }}>
-          POC — Word + PDFs → comparação automática com matching híbrido (cache → fuzzy → LLM →
-          manual)
+    <div className="app-shell">
+      <header className="app-header">
+        <h1>Comparador de Orçamentos</h1>
+        <p className="subtitle">
+          Word/Doc/Txt + PDFs/Notas → comparação automática (cache → fuzzy → LLM em batch → manual)
         </p>
-        {!llmOk && (
-          <div
-            style={{
-              background: '#fff8e0',
-              border: '1px solid #e0b800',
-              padding: 8,
-              borderRadius: 6,
-              fontSize: 13,
-            }}
-          >
-            ⚠️ Chave da OpenRouter não configurada. O LLM ficará desabilitado — apenas
-            cache + fuzzy + revisão manual estarão ativos. Configure{' '}
-            <code>VITE_OPENROUTER_API_KEY</code> no arquivo <code>.env</code>.
-          </div>
-        )}
+        <Tabs />
       </header>
 
-      {error && (
-        <div
-          style={{
-            background: '#ffe5e5',
-            border: '1px solid #c00',
-            padding: 10,
-            borderRadius: 6,
-            marginBottom: 12,
-            display: 'flex',
-            justifyContent: 'space-between',
-          }}
-        >
-          <span style={{ color: '#900' }}>{error}</span>
-          <button
-            onClick={() => setError(null)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer' }}
-          >
-            ✕
-          </button>
-        </div>
-      )}
+      <main className="app-main">
+        {!llmOk && (
+          <div className="banner-warn">
+            ⚠️ <code>VITE_OPENROUTER_API_KEY</code> não configurada — apenas
+            cache + fuzzy + revisão manual estarão ativos.
+          </div>
+        )}
+        {error && (
+          <div className="banner-error">
+            <span>{error}</span>
+            <button className="x" onClick={() => setError(null)}>
+              ✕
+            </button>
+          </div>
+        )}
 
-      <FileUploader />
-      <PurchaseOrderViewer />
-      <SupplierQuotesGrid />
-      <ComparisonTable />
-      <UnmatchedItemsModal />
+        {tab === 'ordem' && (
+          <div className="stack">
+            <OrderUploader />
+            <PurchaseOrderViewer />
+            {order && (
+              <div className="hstack">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setActiveTab('notas')}
+                >
+                  Próximo: anexar notas →
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'notas' && (
+          <div className="stack">
+            <NotesUploader />
+            <SupplierQuotesGrid />
+            {suppliers.length > 0 && (
+              <div className="hstack">
+                <button
+                  className="btn"
+                  onClick={() => openReview(0)}
+                >
+                  Abrir revisão
+                </button>
+                <span className="spacer" />
+                <button
+                  className="btn btn-primary"
+                  disabled={!allReviewed}
+                  onClick={() => setActiveTab('comparacao')}
+                >
+                  {allReviewed
+                    ? 'Ver comparação →'
+                    : 'Resolva todos os itens para liberar a comparação'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'comparacao' && <ComparisonTable />}
+      </main>
+
+      <DocumentReviewCarousel />
     </div>
   );
 }

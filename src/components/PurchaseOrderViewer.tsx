@@ -5,30 +5,34 @@ export function PurchaseOrderViewer() {
   if (!order) return null;
 
   return (
-    <details style={{ marginBottom: 16, background: '#fafafa', padding: 12, borderRadius: 8 }} open>
-      <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
-        Ordem de Compra — {order.items.length} itens
+    <details className="collapse" open>
+      <summary>
+        Itens da ordem ({order.items.length})
       </summary>
-      <table style={{ width: '100%', marginTop: 8, fontSize: 13, borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ background: '#eee' }}>
-            <th style={{ textAlign: 'left', padding: 6 }}>#</th>
-            <th style={{ textAlign: 'left', padding: 6 }}>Descrição</th>
-            <th style={{ textAlign: 'right', padding: 6 }}>Qtd</th>
-            <th style={{ textAlign: 'left', padding: 6 }}>Un.</th>
-          </tr>
-        </thead>
-        <tbody>
-          {order.items.map((it, i) => (
-            <tr key={it.id} style={{ borderBottom: '1px solid #eee' }}>
-              <td style={{ padding: 6 }}>{i + 1}</td>
-              <td style={{ padding: 6 }}>{it.descricao}</td>
-              <td style={{ padding: 6, textAlign: 'right' }}>{it.quantidade}</td>
-              <td style={{ padding: 6 }}>{it.unidade}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="collapse-body" style={{ padding: 0 }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Descrição</th>
+                <th className="right">Qtd</th>
+                <th>Un.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {order.items.map((it, i) => (
+                <tr key={it.id}>
+                  <td>{i + 1}</td>
+                  <td>{it.descricao}</td>
+                  <td className="right">{it.quantidade}</td>
+                  <td>{it.unidade}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </details>
   );
 }
