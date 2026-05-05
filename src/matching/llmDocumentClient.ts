@@ -20,14 +20,15 @@ const MatchResponseSchema = z.object({
 
 export type DocumentMatchResponse = z.infer<typeof MatchResponseSchema>;
 
-const SYSTEM_PROMPT = `Você é um assistente especializado em correspondência de produtos em orçamentos comerciais brasileiros. Sua tarefa: dada uma lista de termos de itens de um orçamento de fornecedor e uma lista de produtos canônicos da ordem de compra, decidir, para cada termo, qual produto canônico corresponde — ou null se nenhum corresponder claramente.
+const SYSTEM_PROMPT = `Você é um assistente especializado em correspondência de produtos em orçamentos comerciais brasileiros (materiais de construção/elétrica). Os itens recebidos JÁ FORAM CLASSIFICADOS por outra etapa (descrição, quantidade e unidade já estão limpos). Sua única tarefa: dada uma lista de termos de itens e uma lista de produtos canônicos da ordem de compra, decidir, para cada termo, qual produto canônico corresponde — ou null se nenhum corresponder claramente.
 
 REGRAS RÍGIDAS:
 1. Para cada itemId fornecido, você DEVE retornar exatamente um objeto em "matches" com o mesmo itemId.
 2. productId só pode ser um dos IDs do catálogo OU null. NÃO invente IDs.
 3. confidence é número de 0.0 a 1.0 refletindo sua certeza.
-4. Considere unidades, especificações técnicas (M8, 1/2", 3/4", BSP, NPT), sinônimos do comércio brasileiro e abreviações.
-5. Se o termo não tem correspondente claro, retorne productId=null com confidence baixa.
+4. Foque em: descrição técnica, dimensões/bitolas (1/2", 3/4", 1.1/2", M8, 100x100), material (PVC/AÇO/COBRE), código/SKU/NCM se vier no termo, e sinônimos do comércio brasileiro (ex.: "eletroduto" ≈ "eletrod rig", "bucha" ≈ "BUA", "arruela" ≈ "ARA").
+5. IGNORE pequenas variações de unidade entre termo e catálogo — a unidade já foi classificada. Concentre-se na identidade do produto.
+6. Se o termo não tem correspondente claro, retorne productId=null com confidence baixa.
 
 FORMATO DE SAÍDA: APENAS JSON, sem texto antes ou depois, com este shape exato:
 {"matches":[{"itemId":"...","productId":"..."|null,"confidence":0.0}]}`;

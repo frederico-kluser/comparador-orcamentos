@@ -25,7 +25,7 @@ export default function App() {
       <header className="app-header">
         <h1>Comparador de Orçamentos</h1>
         <p className="subtitle">
-          Word/Doc/Txt + PDFs/Notas → comparação automática (cache → fuzzy → LLM em batch → manual)
+          Word/Doc/Txt + PDFs/Notas → classificação por LLM, correlação por LLM, cálculo programático
         </p>
         <Tabs />
       </header>
@@ -33,8 +33,8 @@ export default function App() {
       <main className="app-main">
         {!llmOk && (
           <div className="banner-warn">
-            ⚠️ <code>VITE_OPENROUTER_API_KEY</code> não configurada — apenas
-            cache + fuzzy + revisão manual estarão ativos.
+            ⚠️ <code>VITE_OPENROUTER_API_KEY</code> não configurada — sem LLM,
+            os documentos não podem ser classificados nem correlacionados.
           </div>
         )}
         {error && (

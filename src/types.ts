@@ -20,16 +20,20 @@ export interface SupplierLineItem {
   id: string;
   rawTerm: string;
   quantidade: number | null;
+  unidadeAbrev: string | null;   // como veio no PDF: "BR", "PC", "UN", "MT", "RL", "PCT", "CEN"
+  unidadeHumana: string | null;  // pt-BR plural: "barras", "peças", "unidades", "metros", "rolos"
+  isPromocao: boolean;
   valorUnit: string | null;
   valorTotal: string | null;
   matchedProductId: string | null;
-  matchSource: 'cache' | 'fuzzy' | 'llm' | 'manual' | null;
+  matchSource: 'cache' | 'llm' | 'manual' | null;
   matchScore: number | null;
 }
 
 export type SupplierStatus =
-  | 'parsing'
-  | 'processing'   // LLM em voo
+  | 'parsing'        // lendo arquivo
+  | 'classifying'    // LLM extraindo a tabela do documento
+  | 'processing'     // LLM correlacionando itens com a ordem
   | 'awaiting_review'
   | 'reviewed'
   | 'error';

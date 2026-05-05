@@ -5,7 +5,7 @@ import { normalizar } from '@/matching/normalize';
 interface SearchableSelectProps {
   catalog: OrderItem[];
   selectedId: string | null;
-  /** IDs sugeridos (ranking de fuzzy/llm) — aparecem destacados no topo */
+  /** IDs sugeridos pela LLM — aparecem destacados no topo */
   suggestedIds?: string[];
   placeholder?: string;
   onChange: (productId: string | '__none__') => void;

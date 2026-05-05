@@ -63,8 +63,15 @@ export function OrderUploader() {
 }
 
 export function NotesUploader() {
-  const { order, addSupplier, processSupplier, setError, openReview, suppliers } =
-    useStore();
+  const {
+    order,
+    addSupplier,
+    processSupplier,
+    setError,
+    openReview,
+    suppliers,
+    setSupplierStatus,
+  } = useStore();
 
   const dz = useDropzone({
     accept: NOTE_ACCEPT,
@@ -74,19 +81,42 @@ export function NotesUploader() {
       setError(null);
       const startIdx = useStore.getState().suppliers.length;
       let firstAdded = false;
-      for (const f of files) {
+      // Adiciona placeholders 'classifying' antes de chamar a LLM, para o
+      // carrossel já mostrar o loader correto enquanto a classificação roda.
+      const placeholders = files.map((f) => ({
+        id: `pending_${Math.random().toString(36).slice(2, 10)}`,
+        fileName: f.name,
+      }));
+      for (const ph of placeholders) {
+        addSupplier({
+          id: ph.id,
+          fileName: ph.fileName,
+          supplierName: ph.fileName.replace(/\.[^.]+$/, ''),
+          status: 'classifying',
+          items: [],
+        });
+        if (!firstAdded) {
+          firstAdded = true;
+          openReview(startIdx);
+        }
+      }
+
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const phId = placeholders[i].id;
         try {
           const ext = (f.name.split('.').pop() || '').toLowerCase();
           const supplier =
             ext === 'pdf' ? await parsePdf(f) : await parseSupplierTextFile(f);
-          addSupplier(supplier);
-          if (!firstAdded) {
-            firstAdded = true;
-            openReview(startIdx);
-          }
-          // dispara processamento (uma request LLM por documento)
+          // substitui o placeholder pelo supplier real preservando a posição
+          useStore.setState((s) => ({
+            suppliers: s.suppliers.map((x) =>
+              x.id === phId ? { ...supplier, status: 'processing' } : x
+            ),
+          }));
           processSupplier(supplier.id);
         } catch (e) {
+          setSupplierStatus(phId, 'error', (e as Error).message);
           setError(`Erro em "${f.name}": ${(e as Error).message}`);
         }
       }

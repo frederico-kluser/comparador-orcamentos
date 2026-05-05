@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
+import Decimal from 'decimal.js';
 import { useStore } from '@/store';
 import type { SupplierLineItem, SupplierQuote } from '@/types';
 import { formatBRL } from '@/lib/utils';
@@ -7,7 +8,8 @@ import { SearchableSelect } from '@/components/SearchableSelect';
 
 const STATUS_BADGE: Record<string, string> = {
   parsing: 'Parseando…',
-  processing: 'Processando com LLM…',
+  classifying: 'Classificando com LLM…',
+  processing: 'Correlacionando com LLM…',
   awaiting_review: 'Aguardando revisão',
   reviewed: 'Revisado',
   error: 'Erro',
@@ -126,17 +128,18 @@ function SlideContent({ supplier }: { supplier: SupplierQuote }) {
   const order = useStore((s) => s.order)!;
   const resolveItem = useStore((s) => s.resolveItem);
 
-  if (supplier.status === 'parsing' || supplier.status === 'processing') {
-    return (
-      <Loader
-        large
-        label={
-          supplier.status === 'parsing'
-            ? 'Lendo o arquivo…'
-            : 'Identificando produtos com a LLM (uma request para este documento)…'
-        }
-      />
-    );
+  if (
+    supplier.status === 'parsing' ||
+    supplier.status === 'classifying' ||
+    supplier.status === 'processing'
+  ) {
+    const label =
+      supplier.status === 'parsing'
+        ? 'Lendo o arquivo…'
+        : supplier.status === 'classifying'
+        ? 'Classificando colunas e unidades com a LLM…'
+        : 'Correlacionando produtos com a ordem (LLM em batch)…';
+    return <Loader large label={label} />;
   }
 
   if (supplier.status === 'error') {
@@ -161,6 +164,11 @@ function SlideContent({ supplier }: { supplier: SupplierQuote }) {
         </span>
       </div>
 
+      {/* Itens classificados — visão completa do que a LLM extraiu */}
+      {supplier.items.length > 0 && (
+        <ClassifiedItemsCollapse supplier={supplier} />
+      )}
+
       {/* Não identificados — aberto */}
       {unidentified.length > 0 && (
         <details className="collapse warn" open>
@@ -171,9 +179,21 @@ function SlideContent({ supplier }: { supplier: SupplierQuote }) {
             {unidentified.map((it) => (
               <div key={it.id} className="ss-row">
                 <div className="ss-info">
-                  <div className="term">{it.rawTerm}</div>
+                  <div className="term">
+                    {it.rawTerm}
+                    {it.isPromocao && (
+                      <span style={{ marginLeft: 6, color: 'var(--c-warn)', fontWeight: 600 }}>
+                        (P)
+                      </span>
+                    )}
+                  </div>
                   <div className="meta">
-                    {it.quantidade != null && <>Qtd: {it.quantidade} · </>}
+                    {it.quantidade != null && (
+                      <>
+                        Qtd: {it.quantidade}
+                        {it.unidadeHumana ? ' ' + it.unidadeHumana : ''} ·{' '}
+                      </>
+                    )}
                     {it.valorUnit && <>V. unit.: {formatBRL(it.valorUnit)}</>}
                   </div>
                 </div>
@@ -194,7 +214,7 @@ function SlideContent({ supplier }: { supplier: SupplierQuote }) {
       {identified.length > 0 && (
         <details className={'collapse' + (unidentified.length === 0 ? ' ok' : '')}>
           <summary>
-            ✅ Identificados ({identified.length}) — por comparação direta ou LLM
+            ✅ Identificados ({identified.length}) — por cache humano ou LLM
           </summary>
           <div className="collapse-body">
             {identified.map((it) => (
@@ -214,6 +234,78 @@ function SlideContent({ supplier }: { supplier: SupplierQuote }) {
         </div>
       )}
     </div>
+  );
+}
+
+function ClassifiedItemsCollapse({ supplier }: { supplier: SupplierQuote }) {
+  const total = supplier.items.reduce((acc, it) => {
+    if (!it.valorTotal) return acc;
+    try {
+      return acc.plus(new Decimal(it.valorTotal));
+    } catch {
+      return acc;
+    }
+  }, new Decimal(0));
+  const hasPromo = supplier.items.some((it) => it.isPromocao);
+
+  return (
+    <details className="collapse" open>
+      <summary>
+        📋 Itens classificados ({supplier.items.length}) — total {formatBRL(total)}
+      </summary>
+      <div className="collapse-body" style={{ overflowX: 'auto' }}>
+        <table className="table" style={{ fontSize: 12 }}>
+          <thead>
+            <tr>
+              <th style={{ width: 32 }}>#</th>
+              <th>Produto</th>
+              <th className="right">Qtd</th>
+              <th className="right">Valor unit. (R$)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {supplier.items.map((it, i) => {
+              const qty =
+                (it.quantidade ?? '—') +
+                (it.unidadeHumana ? ' ' + it.unidadeHumana : '');
+              return (
+                <tr key={it.id}>
+                  <td className="muted">{i + 1}</td>
+                  <td>
+                    {it.rawTerm}
+                    {it.isPromocao && (
+                      <span
+                        style={{ marginLeft: 6, color: 'var(--c-warn)', fontWeight: 600 }}
+                        title="Promoção"
+                      >
+                        (P)
+                      </span>
+                    )}
+                  </td>
+                  <td className="right">{qty}</td>
+                  <td className="right">
+                    {it.valorUnit
+                      ? new Decimal(it.valorUnit).toFixed(2).replace('.', ',')
+                      : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={{ background: 'var(--c-border)', fontWeight: 700 }}>
+              <td colSpan={3}>Total Geral</td>
+              <td className="right">{formatBRL(total)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        {hasPromo && (
+          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+            (P) = produtos com preço promocional
+          </div>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -256,8 +348,7 @@ function IdentifiedRow({
 
 function sourceLabel(s: SupplierLineItem['matchSource']): string {
   switch (s) {
-    case 'cache': return '💾 cache';
-    case 'fuzzy': return '🔤 fuzzy';
+    case 'cache': return '💾 cache (humano)';
     case 'llm': return '🤖 LLM';
     case 'manual': return '✋ manual';
     default: return '';

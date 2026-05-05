@@ -25,12 +25,16 @@ db.version(1).stores({
 
 export async function findCachedMatch(
   normalizedTerm: string,
-  productListHash: string
+  productListHash: string,
+  onlyHuman = false
 ): Promise<LearnedMatch | undefined> {
-  return db.learned_matches
+  const hit = await db.learned_matches
     .where('[normalized_supplier_term+product_list_hash]')
     .equals([normalizedTerm, productListHash])
     .first();
+  if (!hit) return undefined;
+  if (onlyHuman && hit.source !== 'human') return undefined;
+  return hit;
 }
 
 export async function saveLearnedMatch(match: Omit<LearnedMatch, 'id'>): Promise<void> {

@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import Fuse from 'fuse.js';
 import type {
   AppTab,
   PurchaseOrder,
@@ -36,7 +35,7 @@ interface AppState {
     errorMessage?: string
   ) => void;
 
-  /** Roda fuzzy/cache locais e, em uma única request, o LLM para os faltantes. */
+  /** Lê cache de matches humanos e, em uma única request, chama o LLM para os faltantes. */
   processSupplier: (supplierId: string) => Promise<void>;
 
   /** Resolve manualmente um item específico de um fornecedor. */
@@ -53,9 +52,6 @@ interface AppState {
 
   setError: (msg: string | null) => void;
 }
-
-const FUZZY_AUTO_THRESHOLD = 0.15;
-const FUZZY_AMBIGUITY_THRESHOLD = 0.05;
 
 export const useStore = create<AppState>((set, get) => ({
   order: null,
@@ -103,16 +99,8 @@ export const useStore = create<AppState>((set, get) => ({
     const updatedItems: SupplierLineItem[] = [...sup.items];
     const stillUnmatched: { id: string; rawTerm: string }[] = [];
 
-    // 1) cache + fuzzy locais (comparação direta)
-    const fuse = new Fuse(order.items, {
-      keys: [{ name: 'descricaoNormalizada', weight: 1 }],
-      ignoreDiacritics: true,
-      includeScore: true,
-      threshold: 0.5,
-      minMatchCharLength: 3,
-      ignoreLocation: true,
-    });
-
+    // 1) Cache APENAS de matches confirmados pelo humano (source='human').
+    //    Sem fuzzy: toda decisão automática vai para a LLM.
     for (let i = 0; i < updatedItems.length; i++) {
       const it = updatedItems[i];
       const norm = normalizar(it.rawTerm);
@@ -121,8 +109,7 @@ export const useStore = create<AppState>((set, get) => ({
         continue;
       }
 
-      // cache
-      const cached = await findCachedMatch(norm, order.hash);
+      const cached = await findCachedMatch(norm, order.hash, true);
       if (cached && cached.confirmed_count >= 1) {
         const stillExists = order.items.some((c) => c.id === cached.canonical_product_id);
         if (stillExists) {
@@ -136,23 +123,6 @@ export const useStore = create<AppState>((set, get) => ({
         }
       }
 
-      // fuzzy
-      const hits = fuse.search(norm).slice(0, 5);
-      if (hits.length > 0) {
-        const best = hits[0];
-        const second = hits[1];
-        const ambiguous =
-          second && (second.score! - best.score!) < FUZZY_AMBIGUITY_THRESHOLD;
-        if (best.score! <= FUZZY_AUTO_THRESHOLD && !ambiguous) {
-          updatedItems[i] = {
-            ...it,
-            matchedProductId: best.item.id,
-            matchSource: 'fuzzy',
-            matchScore: best.score ?? null,
-          };
-          continue;
-        }
-      }
       stillUnmatched.push({ id: it.id, rawTerm: it.rawTerm });
     }
 
@@ -176,23 +146,7 @@ export const useStore = create<AppState>((set, get) => ({
             matchSource: 'llm',
             matchScore: m.confidence,
           };
-
-          // grava no cache (não confirmado por humano ainda)
-          const product = order.items.find((p) => p.id === m.productId);
-          if (product) {
-            await saveLearnedMatch({
-              normalized_supplier_term: normalizar(updatedItems[idx].rawTerm),
-              raw_supplier_term: updatedItems[idx].rawTerm,
-              product_list_hash: order.hash,
-              canonical_product_id: product.id,
-              canonical_product_name: product.descricao,
-              confidence: m.confidence,
-              source: 'llm',
-              confirmed_count: 0,
-              created_at: Date.now(),
-              last_used_at: Date.now(),
-            });
-          }
+          // não cacheamos LLM matches: cache é exclusivo de matches humanos confirmados.
         }
       } catch (e) {
         console.warn('LLM falhou para o documento, indo para revisão manual:', e);

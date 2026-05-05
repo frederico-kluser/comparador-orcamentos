@@ -116,8 +116,7 @@ export function ComparisonTable() {
 
 function sourceLabel(s: string): string {
   switch (s) {
-    case 'cache': return '💾 cache';
-    case 'fuzzy': return '🔤 fuzzy';
+    case 'cache': return '💾 cache (humano)';
     case 'llm': return '🤖 LLM';
     case 'manual': return '✋ manual';
     default: return s;
