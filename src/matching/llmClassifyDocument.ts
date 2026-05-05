@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { callOpenRouterJSONStream } from './llmStream';
+import { callOpenAICompatJSONStream } from './llmStream';
 
 const ClassifiedItemSchema = z.object({
   rawTerm: z.string().min(1),
@@ -48,12 +48,13 @@ export async function classifyDocumentLLM(
   rawText: string,
   fileName: string
 ): Promise<ClassifyResponse> {
-  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
-  const model = import.meta.env.VITE_OPENROUTER_MODEL || 'deepseek/deepseek-v4-pro';
+  const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY;
+  const baseUrl = import.meta.env.VITE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
+  const model = import.meta.env.VITE_DEEPSEEK_MODEL_CLASSIFY || 'deepseek-v4-flash';
 
   if (!apiKey || apiKey.includes('xxxxxxxx')) {
     throw new Error(
-      'VITE_OPENROUTER_API_KEY não configurada. Crie um .env com base em .env.example.'
+      'VITE_DEEPSEEK_API_KEY não configurada. Crie um .env com base em .env.example.'
     );
   }
 
@@ -70,8 +71,9 @@ export async function classifyDocumentLLM(
     `<<<\n${trimmed}\n>>>\n\n` +
     `Devolva o JSON conforme as regras.`;
 
-  const content = await callOpenRouterJSONStream({
+  const content = await callOpenAICompatJSONStream({
     apiKey,
+    baseUrl,
     model,
     systemPrompt: SYSTEM_PROMPT,
     userMessage,

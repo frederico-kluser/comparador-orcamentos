@@ -1,10 +1,10 @@
 /**
- * Cliente OpenRouter compartilhado:
+ * Cliente OpenAI-compatible (DeepSeek API direto):
  * - streaming SSE (`stream: true`) para resposta em tempo real
- * - desliga raciocínio (`reasoning: { enabled: false }`) — caro/lento, e o
- *   anúncio oficial do OpenRouter confirma esse parâmetro como o jeito padrão
- *   de desligar thinking em models como MiniMax M2/M2.7
- *   https://x.com/OpenRouterAI/status/1969427723098435738
+ * - desliga thinking via `thinking: { type: "disabled" }` — sintaxe oficial
+ *   do DeepSeek V4. Sem isso o modelo gasta tokens em reasoning interno
+ *   (vide `reasoning_content` na resposta) e a chamada fica MUITO mais lenta.
+ *   https://api-docs.deepseek.com/guides/thinking_mode
  * - força JSON via `response_format: { type: "json_object" }`
  * - logs ao vivo no console (cada chunk delta) para depuração
  *
@@ -13,6 +13,7 @@
 
 export interface LLMStreamOptions {
   apiKey: string;
+  baseUrl: string;            // ex.: "https://api.deepseek.com"
   model: string;
   systemPrompt: string;
   userMessage: string;
@@ -21,36 +22,44 @@ export interface LLMStreamOptions {
   logTag: string;
 }
 
-interface OpenRouterStreamChunk {
+interface OpenAICompatStreamChunk {
   choices?: Array<{
     delta?: {
       content?: string;
-      reasoning?: string;
       reasoning_content?: string;
     };
     finish_reason?: string | null;
   }>;
 }
 
-export async function callOpenRouterJSONStream(
+export async function callOpenAICompatJSONStream(
   opts: LLMStreamOptions
 ): Promise<string> {
-  const { apiKey, model, systemPrompt, userMessage, maxTokens = 16000, logTag } = opts;
+  const {
+    apiKey,
+    baseUrl,
+    model,
+    systemPrompt,
+    userMessage,
+    maxTokens = 16000,
+    logTag,
+  } = opts;
 
   // eslint-disable-next-line no-console
   console.log(`${logTag} → request`, {
+    baseUrl,
     model,
     maxTokens,
     promptChars: userMessage.length,
   });
 
-  const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const url = baseUrl.replace(/\/$/, '') + '/chat/completions';
+
+  const resp = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': window.location.origin,
-      'X-Title': 'Comparador de Orcamentos',
       Accept: 'text/event-stream',
     },
     body: JSON.stringify({
@@ -59,7 +68,7 @@ export async function callOpenRouterJSONStream(
       max_tokens: maxTokens,
       stream: true,
       response_format: { type: 'json_object' },
-      reasoning: { enabled: false },
+      thinking: { type: 'disabled' },
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -69,10 +78,12 @@ export async function callOpenRouterJSONStream(
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
-    throw new Error(`OpenRouter HTTP ${resp.status}: ${errText.slice(0, 240)}`);
+    // eslint-disable-next-line no-console
+    console.error(`${logTag} ✗ HTTP ${resp.status}`, errText.slice(0, 600));
+    throw new Error(`DeepSeek HTTP ${resp.status}: ${errText.slice(0, 240)}`);
   }
   if (!resp.body) {
-    throw new Error('OpenRouter retornou sem body para streaming.');
+    throw new Error('DeepSeek retornou sem body para streaming.');
   }
 
   const reader = resp.body.getReader();
@@ -100,9 +111,9 @@ export async function callOpenRouterJSONStream(
         const payload = trimmed.slice(5).trim();
         if (!payload || payload === '[DONE]') continue;
 
-        let parsed: OpenRouterStreamChunk;
+        let parsed: OpenAICompatStreamChunk;
         try {
-          parsed = JSON.parse(payload) as OpenRouterStreamChunk;
+          parsed = JSON.parse(payload) as OpenAICompatStreamChunk;
         } catch {
           // eslint-disable-next-line no-console
           console.warn(`${logTag} chunk não-JSON ignorado:`, payload.slice(0, 120));

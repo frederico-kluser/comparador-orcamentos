@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import { callOpenRouterJSONStream } from './llmStream';
+import { callOpenAICompatJSONStream } from './llmStream';
 
 /**
  * LLM em modo "uma request por documento":
  * envia TODOS os items ainda não identificados de um fornecedor + o catálogo
  * canônico, e recebe os matches em uma única chamada.
  *
- * Modelo padrão: deepseek/deepseek-v4-pro (override via VITE_OPENROUTER_MODEL).
+ * Modelo padrão: deepseek-v4-pro (override via VITE_DEEPSEEK_MODEL_MATCH).
  */
 
 const MatchRowSchema = z.object({
@@ -40,12 +40,13 @@ export async function callDocumentMatchLLM(
   unmatchedItems: { id: string; rawTerm: string }[],
   catalogo: { id: string; descricao: string }[]
 ): Promise<DocumentMatchResponse> {
-  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
-  const model = import.meta.env.VITE_OPENROUTER_MODEL || 'deepseek/deepseek-v4-pro';
+  const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY;
+  const baseUrl = import.meta.env.VITE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
+  const model = import.meta.env.VITE_DEEPSEEK_MODEL_MATCH || 'deepseek-v4-pro';
 
   if (!apiKey || apiKey.includes('xxxxxxxx')) {
     throw new Error(
-      'VITE_OPENROUTER_API_KEY não configurada. Crie um .env com base em .env.example.'
+      'VITE_DEEPSEEK_API_KEY não configurada. Crie um .env com base em .env.example.'
     );
   }
 
@@ -56,8 +57,9 @@ export async function callDocumentMatchLLM(
     unmatchedItems.map((it) => `- itemId: "${it.id}" | termo: "${it.rawTerm}"`).join('\n') +
     `\n\nResponda em JSON com {"matches":[...]} contendo um objeto por itemId acima.`;
 
-  const content = await callOpenRouterJSONStream({
+  const content = await callOpenAICompatJSONStream({
     apiKey,
+    baseUrl,
     model,
     systemPrompt: SYSTEM_PROMPT,
     userMessage,
@@ -93,7 +95,7 @@ export async function callDocumentMatchLLM(
 }
 
 export function isLLMConfigured(): boolean {
-  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+  const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY;
   return !!apiKey && !apiKey.includes('xxxxxxxx');
 }
 

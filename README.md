@@ -9,7 +9,7 @@ Suba a **ordem de compra** (`.docx`, `.doc` ou `.txt`) e as **notas/orçamentos*
 ```bash
 npm install
 cp .env.example .env
-# edite .env e cole sua chave OpenRouter
+# edite .env e cole sua chave DeepSeek (https://platform.deepseek.com)
 npm run dev
 ```
 
@@ -84,7 +84,7 @@ src/
 
 ## Aviso de segurança
 
-⚠️ **Esta POC chama a OpenRouter direto do client** com a chave em `VITE_OPENROUTER_API_KEY`. Isso **expõe a chave** no bundle JS — aceitável para teste local, mas antes de subir para a Vercel, mover as duas chamadas LLM (`classifyDocumentLLM`, `callDocumentMatchLLM`) para Vercel Serverless Functions lendo `OPENROUTER_API_KEY` do servidor.
+⚠️ **Esta POC chama a DeepSeek API direto do client** com a chave em `VITE_DEEPSEEK_API_KEY`. Isso **expõe a chave** no bundle JS — aceitável para teste local, mas antes de subir para a Vercel, mover as duas chamadas LLM (`classifyDocumentLLM`, `callDocumentMatchLLM`) para Vercel Serverless Functions lendo `DEEPSEEK_API_KEY` do servidor.
 
 ## Stack
 
@@ -94,4 +94,6 @@ src/
 - Zustand (state)
 - Decimal.js (cálculo monetário)
 - Zod (validação das respostas LLM)
-- OpenRouter — modelo configurável via `VITE_OPENROUTER_MODEL` (default `deepseek/deepseek-v4-pro`)
+- DeepSeek API direto (OpenAI-compatible, streaming SSE, `thinking: { type: "disabled" }`)
+  - Classificação: `VITE_DEEPSEEK_MODEL_CLASSIFY` (default `deepseek-v4-flash` — rápido/barato)
+  - Correlação: `VITE_DEEPSEEK_MODEL_MATCH` (default `deepseek-v4-pro` — raciocínio mais forte)
