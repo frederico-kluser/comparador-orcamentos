@@ -29,7 +29,7 @@ REGRAS:
    MT  → metros (1 → metro)
    RL  → rolos (1 → rolo)
    PCT → pacotes (1 → pacote)
-   CEN → centos (1 → cento)
+   CEN → centos (1 → peça)
    CX  → caixas (1 → caixa)
    KG  → quilos (1 → quilo)
    PAR → pares (1 → par)
