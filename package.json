@@ -3,10 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:dev": "npm run build && electron .",
+    "electron:dist": "npm run build && electron-builder --win"
   },
   "dependencies": {
     "decimal.js": "^10.4.3",
@@ -25,7 +28,23 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
+    "electron": "^35.1.2",
+    "electron-builder": "^26.0.12",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
+  },
+  "build": {
+    "appId": "com.comparador.orcamentos",
+    "productName": "Comparador de Orcamentos",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": "portable"
+    }
   }
 }
