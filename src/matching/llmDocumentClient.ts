@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { callOpenRouterJSONStream } from './llmStream';
 
 /**
  * LLM em modo "uma request por documento":
@@ -55,34 +56,14 @@ export async function callDocumentMatchLLM(
     unmatchedItems.map((it) => `- itemId: "${it.id}" | termo: "${it.rawTerm}"`).join('\n') +
     `\n\nResponda em JSON com {"matches":[...]} contendo um objeto por itemId acima.`;
 
-  const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': window.location.origin,
-      'X-Title': 'Comparador de Orcamentos',
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      max_tokens: Math.min(8000, 200 + unmatchedItems.length * 80),
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userMessage },
-      ],
-    }),
+  const content = await callOpenRouterJSONStream({
+    apiKey,
+    model,
+    systemPrompt: SYSTEM_PROMPT,
+    userMessage,
+    maxTokens: Math.max(2000, Math.min(16000, 200 + unmatchedItems.length * 80)),
+    logTag: '[match]',
   });
-
-  if (!resp.ok) {
-    const errText = await resp.text().catch(() => '');
-    throw new Error(`OpenRouter HTTP ${resp.status}: ${errText.slice(0, 240)}`);
-  }
-
-  const data = await resp.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error('Resposta LLM vazia.');
 
   let parsed: unknown;
   try {

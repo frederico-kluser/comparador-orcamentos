@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { callOpenRouterJSONStream } from './llmStream';
 
 const ClassifiedItemSchema = z.object({
   rawTerm: z.string().min(1),
@@ -69,34 +70,14 @@ export async function classifyDocumentLLM(
     `<<<\n${trimmed}\n>>>\n\n` +
     `Devolva o JSON conforme as regras.`;
 
-  const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': window.location.origin,
-      'X-Title': 'Comparador de Orcamentos',
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      max_tokens: 16000,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userMessage },
-      ],
-    }),
+  const content = await callOpenRouterJSONStream({
+    apiKey,
+    model,
+    systemPrompt: SYSTEM_PROMPT,
+    userMessage,
+    maxTokens: 16000,
+    logTag: '[classify]',
   });
-
-  if (!resp.ok) {
-    const errText = await resp.text().catch(() => '');
-    throw new Error(`OpenRouter HTTP ${resp.status}: ${errText.slice(0, 240)}`);
-  }
-
-  const data = await resp.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error('Resposta LLM vazia na classificação.');
 
   let parsed: unknown;
   try {
