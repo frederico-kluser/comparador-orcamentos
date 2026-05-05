@@ -82,6 +82,31 @@ src/
 └── styles.css                     (responsivo, mobile-first)
 ```
 
+## Build de instaladores (Electron)
+
+O app empacota como Electron via `electron-builder`. Os instaladores saem em `./release/`.
+
+```bash
+# macOS (.dmg + .zip, x64 e arm64)
+./scripts/build-mac.sh
+# ou:
+npm run dist:mac
+
+# Windows (NSIS .exe instalador + .exe portable, x64)
+./scripts/build-win.sh
+# ou:
+npm run dist:win
+
+# Tudo de uma vez (precisa rodar em mac com Wine, ou em CI multi-OS)
+npm run dist:all
+```
+
+**Notas**:
+- **macOS**: build nativo precisa de macOS host. No Linux gera DMG não-assinado (Gatekeeper rejeita) — útil só para testes. Para distribuir, rodar em Mac com `CSC_LINK`/`CSC_KEY_PASSWORD` para assinar/notarizar.
+- **Windows no Linux**: `electron-builder` usa Wine internamente. Instale com `sudo apt install wine wine64` antes.
+- O instalador NSIS abre wizard com escolha de pasta, atalho desktop e atalho no menu Iniciar.
+- Versão portable do Windows não precisa de instalação — roda direto do `.exe`.
+
 ## Aviso de segurança
 
 ⚠️ **Esta POC chama a DeepSeek API direto do client** com a chave em `VITE_DEEPSEEK_API_KEY`. Isso **expõe a chave** no bundle JS — aceitável para teste local, mas antes de subir para a Vercel, mover as duas chamadas LLM (`classifyDocumentLLM`, `callDocumentMatchLLM`) para Vercel Serverless Functions lendo `DEEPSEEK_API_KEY` do servidor.
