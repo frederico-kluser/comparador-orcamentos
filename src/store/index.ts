@@ -38,11 +38,15 @@ interface AppState {
   /** Lê cache de matches humanos e, em uma única request, chama o LLM para os faltantes. */
   processSupplier: (supplierId: string) => Promise<void>;
 
-  /** Resolve manualmente um item específico de um fornecedor. */
+  /** Resolve manualmente um item específico de um fornecedor.
+   *  - id de produto → match manual
+   *  - '__none__'    → limpa o match
+   *  - '__skip__'    → marca como pulado (não bloqueia comparação)
+   */
   resolveItem: (
     supplierId: string,
     itemId: string,
-    productId: string | '__none__'
+    productId: string | '__none__' | '__skip__'
   ) => Promise<void>;
 
   setActiveTab: (t: AppTab) => void;
@@ -153,7 +157,9 @@ export const useStore = create<AppState>((set, get) => ({
       }
     }
 
-    const remainingUnmatched = updatedItems.filter((x) => !x.matchedProductId).length;
+    const remainingUnmatched = updatedItems.filter(
+      (x) => !x.matchedProductId && x.matchSource !== 'skipped'
+    ).length;
     set((s) => ({
       suppliers: s.suppliers.map((x) =>
         x.id === supplierId
@@ -187,6 +193,14 @@ export const useStore = create<AppState>((set, get) => ({
       if (productId === '__none__') {
         return { ...it, matchedProductId: null, matchSource: null, matchScore: null };
       }
+      if (productId === '__skip__') {
+        return {
+          ...it,
+          matchedProductId: null,
+          matchSource: 'skipped' as const,
+          matchScore: null,
+        };
+      }
       return {
         ...it,
         matchedProductId: productId,
@@ -195,7 +209,9 @@ export const useStore = create<AppState>((set, get) => ({
       };
     });
 
-    const remaining = newItems.filter((x) => !x.matchedProductId).length;
+    const remaining = newItems.filter(
+      (x) => !x.matchedProductId && x.matchSource !== 'skipped'
+    ).length;
     set((s) => ({
       suppliers: s.suppliers.map((x) =>
         x.id === supplierId

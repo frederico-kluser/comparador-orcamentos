@@ -26,7 +26,7 @@ export interface SupplierLineItem {
   valorUnit: string | null;
   valorTotal: string | null;
   matchedProductId: string | null;
-  matchSource: 'cache' | 'llm' | 'manual' | null;
+  matchSource: 'cache' | 'llm' | 'manual' | 'skipped' | null;
   matchScore: number | null;
 }
 

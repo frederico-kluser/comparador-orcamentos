@@ -3,6 +3,9 @@ import { useStore } from '@/store';
 import { parseOrderFile } from '@/parser/orderParser';
 import { parsePdf } from '@/parser/pdfParser';
 import { parseSupplierTextFile } from '@/parser/supplierTextParser';
+import { runWithLimit } from '@/lib/concurrency';
+
+const MAX_PARALLEL_NOTES = 5;
 
 const ORDER_ACCEPT = {
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
@@ -101,25 +104,27 @@ export function NotesUploader() {
         }
       }
 
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        const phId = placeholders[i].id;
+      // Pool de até 5 análises em paralelo. Cada slot, ao terminar
+      // (classify + match), puxa o próximo arquivo da fila.
+      const jobs = files.map((file, i) => ({ file, phId: placeholders[i].id }));
+      await runWithLimit(jobs, MAX_PARALLEL_NOTES, async ({ file, phId }) => {
         try {
-          const ext = (f.name.split('.').pop() || '').toLowerCase();
+          const ext = (file.name.split('.').pop() || '').toLowerCase();
           const supplier =
-            ext === 'pdf' ? await parsePdf(f) : await parseSupplierTextFile(f);
+            ext === 'pdf' ? await parsePdf(file) : await parseSupplierTextFile(file);
           // substitui o placeholder pelo supplier real preservando a posição
           useStore.setState((s) => ({
             suppliers: s.suppliers.map((x) =>
               x.id === phId ? { ...supplier, status: 'processing' } : x
             ),
           }));
-          processSupplier(supplier.id);
+          // aguarda match para o slot do pool só liberar após o pipeline inteiro
+          await processSupplier(supplier.id);
         } catch (e) {
           setSupplierStatus(phId, 'error', (e as Error).message);
-          setError(`Erro em "${f.name}": ${(e as Error).message}`);
+          setError(`Erro em "${file.name}": ${(e as Error).message}`);
         }
-      }
+      });
     },
   });
 

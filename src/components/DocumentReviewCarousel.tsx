@@ -151,7 +151,12 @@ function SlideContent({ supplier }: { supplier: SupplierQuote }) {
   }
 
   const identified = supplier.items.filter((i) => i.matchedProductId);
-  const unidentified = supplier.items.filter((i) => !i.matchedProductId);
+  const skipped = supplier.items.filter(
+    (i) => !i.matchedProductId && i.matchSource === 'skipped'
+  );
+  const unidentified = supplier.items.filter(
+    (i) => !i.matchedProductId && i.matchSource !== 'skipped'
+  );
 
   return (
     <div className="stack">
@@ -173,7 +178,7 @@ function SlideContent({ supplier }: { supplier: SupplierQuote }) {
       {unidentified.length > 0 && (
         <details className="collapse warn" open>
           <summary>
-            ⚠️ Não identificados ({unidentified.length}) — escolha o produto correspondente
+            ⚠️ Não identificados ({unidentified.length}) — escolha o produto ou pule
           </summary>
           <div className="collapse-body">
             {unidentified.map((it) => (
@@ -197,13 +202,62 @@ function SlideContent({ supplier }: { supplier: SupplierQuote }) {
                     {it.valorUnit && <>V. unit.: {formatBRL(it.valorUnit)}</>}
                   </div>
                 </div>
-                <SearchableSelect
-                  catalog={order.items}
-                  selectedId={null}
-                  onChange={(productId) =>
-                    resolveItem(supplier.id, it.id, productId)
-                  }
-                />
+                <div className="hstack" style={{ gap: 6, alignItems: 'center' }}>
+                  <SearchableSelect
+                    catalog={order.items}
+                    selectedId={null}
+                    onChange={(productId) =>
+                      resolveItem(supplier.id, it.id, productId)
+                    }
+                  />
+                  <button
+                    className="btn-ghost"
+                    onClick={() => resolveItem(supplier.id, it.id, '__skip__')}
+                    title="Pular este item — não correlaciona com nenhum produto da ordem"
+                  >
+                    ⏭ Pular
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Pulados — fechado */}
+      {skipped.length > 0 && (
+        <details className="collapse">
+          <summary>
+            ⏭ Pulados ({skipped.length}) — não entram na comparação deste fornecedor
+          </summary>
+          <div className="collapse-body">
+            {skipped.map((it) => (
+              <div key={it.id} className="id-row">
+                <div>
+                  <div style={{ fontWeight: 600 }}>
+                    {it.rawTerm}
+                    {it.isPromocao && (
+                      <span
+                        style={{ marginLeft: 6, color: 'var(--c-warn)', fontWeight: 600 }}
+                      >
+                        (P)
+                      </span>
+                    )}
+                  </div>
+                  <div className="muted" style={{ fontSize: 11 }}>
+                    Qtd: {it.quantidade ?? '—'}
+                    {it.unidadeHumana ? ' ' + it.unidadeHumana : ''}
+                    {it.valorUnit ? ' · V. unit.: ' + formatBRL(it.valorUnit) : ''}
+                  </div>
+                </div>
+                <div className="src">⏭ pulado</div>
+                <button
+                  className="btn-ghost"
+                  onClick={() => resolveItem(supplier.id, it.id, '__none__')}
+                  title="Voltar para Não identificados"
+                >
+                  ↺
+                </button>
               </div>
             ))}
           </div>
@@ -351,6 +405,7 @@ function sourceLabel(s: SupplierLineItem['matchSource']): string {
     case 'cache': return '💾 cache (humano)';
     case 'llm': return '🤖 LLM';
     case 'manual': return '✋ manual';
+    case 'skipped': return '⏭ pulado';
     default: return '';
   }
 }

@@ -119,6 +119,7 @@ function sourceLabel(s: string): string {
     case 'cache': return '💾 cache (humano)';
     case 'llm': return '🤖 LLM';
     case 'manual': return '✋ manual';
+    case 'skipped': return '⏭ pulado';
     default: return s;
   }
 }
