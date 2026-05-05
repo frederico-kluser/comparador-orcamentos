@@ -58,13 +58,13 @@ export function ComparisonTable() {
                     <td
                       key={s.id}
                       className={'right' + (isBest ? ' best' : '')}
-                      style={{ color: !cell?.subtotal ? '#aaa' : undefined }}
+                      style={{ color: !cell?.subtotal ? 'var(--c-muted)' : undefined }}
                     >
                       {cell?.subtotal ? (
                         <>
                           {formatBRL(cell.subtotal)}
                           {cell.matchSource && (
-                            <div style={{ fontSize: 10, color: '#666' }}>
+                            <div style={{ fontSize: 10, color: 'var(--c-muted)' }}>
                               {sourceLabel(cell.matchSource)}
                             </div>
                           )}
@@ -84,7 +84,7 @@ export function ComparisonTable() {
             ))}
           </tbody>
           <tfoot>
-            <tr style={{ background: '#f0f1f4', fontWeight: 700 }}>
+            <tr style={{ background: 'var(--c-border)', fontWeight: 700 }}>
               <td colSpan={2}>TOTAL</td>
               {suppliers.map((s) => {
                 const isWinner = s.id === result.globalWinnerId;
@@ -93,7 +93,7 @@ export function ComparisonTable() {
                   <td key={s.id} className={'right' + (isWinner ? ' best' : '')}>
                     {formatBRL(result.totals[s.id])}
                     {missing > 0 && (
-                      <div style={{ fontSize: 10, color: '#a60', fontWeight: 400 }}>
+                      <div style={{ fontSize: 10, color: 'var(--c-warn)', fontWeight: 400 }}>
                         ({missing} faltante{missing > 1 ? 's' : ''})
                       </div>
                     )}
