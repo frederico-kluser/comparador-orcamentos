@@ -20,6 +20,8 @@ melhor à pior proposta). Tela 4 ganha refac de célula.
 | 4 — Comparação cruzada   | `[REFAC]`         | `src/components/ComparisonTable.tsx`           |
 | Worker pool 5 simultâneos| `[EXISTE]`        | `src/lib/concurrency.ts` + `src/components/FileUploader.tsx` |
 | Normalização de unidades | `[EXISTE, ampliar]` | `src/matching/llmClassifyDocument.ts:26-36`  |
+| **Limpeza LLM da lista mestre** | `[NOVO CRÍTICO]` | `src/matching/llmClassifyOrder.ts` (a criar)   |
+| Parser da lista mestre   | `[REFAC]`         | `src/parser/orderParser.ts`                    |
 | Matcher LLM              | `[REFAC CRÍTICO]` | `src/matching/llmDocumentClient.ts`            |
 | Pré-filtro lexical       | `[NOVO]`          | `src/matching/preFilter.ts` (a criar)          |
 | Cálculo / ranking JS     | `[EXISTE+NOVO]`   | `src/pricing/calculator.ts` + `src/pricing/ranker.ts` (a criar) |
@@ -69,12 +71,17 @@ comparador-orcamentos/
     │   ├── pdfParser.ts                       [EXISTE]
     │   └── supplierTextParser.ts              [EXISTE]
     ├── matching/
-    │   ├── llmClassifyDocument.ts             [EXISTE — ampliar mapping de unidades]
+    │   ├── llmClassifyDocument.ts             [EXISTE — usa CLASSIFY_SYSTEM_PROMPT do prompts.ts]
+    │   ├── llmClassifyOrder.ts                [NOVO — limpa a lista mestre antes do parse]
     │   ├── llmDocumentClient.ts               [REFAC — usa preFilter + novo prompt + hard-fail]
     │   ├── llmStream.ts                       [EXISTE]
     │   ├── normalize.ts                       [EXISTE]
     │   ├── preFilter.ts                       [NOVO — fuse.js top-K candidatos]
     │   └── prompts.ts                         [NOVO — prompts isolados, versionáveis]
+    ├── parser/
+    │   ├── orderParser.ts                     [REFAC — LLM primeiro, regex fallback]
+    │   ├── pdfParser.ts                       [EXISTE]
+    │   └── supplierTextParser.ts              [EXISTE]
     ├── components/
     │   ├── PurchaseOrderViewer.tsx            [EXISTE — relabel "Descrição" → "Nome"]
     │   ├── FileUploader.tsx                   [EXISTE]
@@ -222,24 +229,36 @@ export interface RankedProposal {
 ### 4.1 Sequência ponta-a-ponta
 
 ```
-┌─────────────────┐    ┌────────────────────┐    ┌──────────────────┐
-│ Upload (drop)   │───▶│ parsePdf /         │───▶│ classifyDocument │
-│ .docx / .pdf    │    │ parseSupplierText  │    │ LLM (Stage 1)    │
-└─────────────────┘    └────────────────────┘    └────────┬─────────┘
-                                                          │
-                                                          ▼
-        ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+LISTA MESTRE (uma vez por sessão):
+┌──────────────────┐    ┌────────────────────┐    ┌────────────────────┐
+│ Upload .docx/    │───▶│ extractTextAnd     │───▶│ classifyOrderLLM   │
+│ .pdf/.txt        │    │ Fallback (mammoth/ │    │ (limpa cabeçalhos, │
+│                  │    │  pdfjs)            │    │  preserva nomes)   │
+└──────────────────┘    └────────────────────┘    └─────────┬──────────┘
+                                  │                         │
+                                  │  fallback regex          │ items canônicos
+                                  ▼  (se LLM falhar)         ▼
+                              ┌─────────────────────────────────┐
+                              │     PurchaseOrder (master)       │
+                              └────────────────┬─────────────────┘
+                                               │
+PROPOSTAS (worker pool, até 5 simultâneas):    │
+┌─────────────────┐    ┌────────────────────┐  │  ┌──────────────────┐
+│ Upload (drop)   │───▶│ parsePdf /         │──▶│  │ classifyDocument │
+│ .docx / .pdf    │    │ parseSupplierText  │  │  │ LLM (Stage 1)    │
+└─────────────────┘    └────────────────────┘  │  └────────┬─────────┘
+                                               │           │
+        ┌──────────────────┐    ┌──────────────┴───┐    ┌──┴───────────────┐
         │ DocumentReview   │◀───│ hardFail postproc│◀───│ callDocumentMatch│
         │ Carousel         │    │ (JS, cinto +     │    │ LLM (Stage 2,    │
         │ (revisão manual) │    │  suspensório)    │    │  novo prompt)    │
         └────────┬─────────┘    └──────────────────┘    └─────────▲────────┘
                  │                                                │
-                 │                                                │
                  │              ┌──────────────────┐              │
                  │              │ preFilter        │──────────────┘
                  │              │ (fuse.js top-10) │
                  │              └─────────▲────────┘
-                 │                        │
+                 │                        │ master items canônicos
                  │                  unmatched items
                  ▼
         ┌──────────────────┐    ┌────────────────┐    ┌────────────────┐
@@ -280,6 +299,29 @@ atomicamente (`nextIdx++`); um slot só pega o próximo após terminar o pipelin
 ---
 
 ## 5. Estratégia de matching automático e fallback manual
+
+### 5.0 Passo 0 — Limpeza LLM da LISTA MESTRE (NOVO crítico)
+
+Antes de qualquer matching, a lista mestre precisa estar canônica e sem ruído.
+O `lista.docx` real do usuário tem cabeçalhos de seção em CAPS ("CABOS
+ALIMENTADORES PAINÉIS:", "INFRA-ESTRUTURA SALA DE BOMBAS RECALQUE:"), linhas
+de contexto do projeto ("BOMBA RECALQUE (6X)/DRENAGEM (2X)/CASCATA (2X)") e
+HTML entities (`&quot;`) — o regex anterior estava transformando cabeçalhos
+em itens, corrompendo a base.
+
+Fluxo (`src/parser/orderParser.ts` REFAC):
+1. \`extractTextAndFallback(file)\` extrai texto bruto via mammoth/pdfjs/UTF-8
+   e, em paralelo, computa items por regex/tabela (fallback).
+2. Se LLM configurada: \`classifyOrderLLM(rawText, fileName)\` (em
+   \`src/matching/llmClassifyOrder.ts\`, NOVO) devolve a lista limpa.
+3. Se LLM falhar OU vier vazia: usa fallback regex.
+
+Prompt (\`CLASSIFY_ORDER_SYSTEM_PROMPT\` em \`prompts.ts\`):
+- PRESERVA nome literalmente (apenas trim + decode entities).
+- NORMALIZA unidade para forma humana plural/singular.
+- IGNORA cabeçalhos de seção em CAPS terminados em ":" e linhas de contexto.
+- MANTÉM duplicatas (são pedidos de seções diferentes — case real desta base).
+- Faz MERGE de descrições quebradas em 2 linhas.
 
 ### 5.1 Pipeline em 4 passos
 

@@ -5,50 +5,97 @@ import { hashStrings, uid } from '@/lib/utils';
 import { readDocAsBestEffortText, readFileAsUtf8 } from '@/lib/textIO';
 import { sanitizeText } from '@/lib/textSanitize';
 import { extractPdfLines, type PdfTextLine } from '@/lib/pdfText';
+import { classifyOrderLLM } from '@/matching/llmClassifyOrder';
+import { isLLMConfigured } from '@/matching/llmDocumentClient';
 
 /**
  * Roteia o parsing da ordem de compra pelo tipo do arquivo.
  *
- * Suportados: .docx (mammoth), .doc (best-effort strings), .pdf (pdfjs),
- * .txt (UTF-8 puro). Independente do formato, extrai uma lista de OrderItem
- * com descrição, quantidade e unidade.
+ * Pipeline:
+ *  1. Extrai TEXTO BRUTO do arquivo (mammoth/pdfjs/UTF-8) e, em paralelo,
+ *     uma lista FALLBACK por regex/tabela (caso a LLM falhe).
+ *  2. Se a LLM estiver configurada, manda o texto para `classifyOrderLLM`,
+ *     que descarta cabeçalhos de seção, contexto do projeto, totais e
+ *     observações — devolvendo a lista canônica de itens.
+ *  3. Se a LLM falhar OU vier vazia, usa o fallback regex.
  */
 export async function parseOrderFile(file: File): Promise<PurchaseOrder> {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
-
-  if (ext === 'docx') return parseFromDocx(file);
-  if (ext === 'doc') return parseFromDoc(file);
-  if (ext === 'pdf') return parseFromPdf(file);
-  if (ext === 'txt') return parseFromTxt(file);
-
-  throw new Error(`Formato não suportado: .${ext}. Use .docx, .doc, .pdf ou .txt.`);
-}
-
-async function parseFromDocx(file: File): Promise<PurchaseOrder> {
-  const arrayBuffer = await file.arrayBuffer();
-  const result = await mammoth.convertToHtml({ arrayBuffer });
-
-  const doc = new DOMParser().parseFromString(result.value, 'text/html');
-  const tables = doc.querySelectorAll('table');
-
-  if (tables.length > 0) {
-    const items = extractFromHtmlTables(tables);
-    if (items.length > 0) return packageOrder(file.name, items);
+  if (!['docx', 'doc', 'pdf', 'txt'].includes(ext)) {
+    throw new Error(`Formato não suportado: .${ext}. Use .docx, .doc, .pdf ou .txt.`);
   }
 
-  const rawText = sanitizeText(doc.body?.textContent || '');
-  const items = extractFromPlainText(rawText);
-  if (items.length === 0) {
+  const { rawText, fallbackItems } = await extractTextAndFallback(file, ext);
+
+  if (isLLMConfigured() && rawText.trim().length > 0) {
+    try {
+      const resp = await classifyOrderLLM(rawText, file.name);
+      const items = resp.items
+        .filter((it) => it.nome && it.nome.trim().length > 0)
+        .map((it, i) =>
+          makeItem(
+            it.nome.trim(),
+            typeof it.quantidade === 'number' && !Number.isNaN(it.quantidade)
+              ? it.quantidade
+              : 1,
+            (it.unidade || '').trim() || 'un',
+            i
+          )
+        );
+      if (items.length > 0) return packageOrder(file.name, items);
+      // eslint-disable-next-line no-console
+      console.warn('[order] LLM retornou lista vazia — caindo para fallback regex');
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[order] LLM falhou — caindo para fallback regex:', e);
+    }
+  }
+
+  if (fallbackItems.length === 0) {
     throw new Error(
-      'Não consegui extrair itens do .docx. Verifique se há tabela [Descrição, Quantidade, Unidade] ou linhas no formato "qtd un - descrição".'
+      `Não consegui extrair itens de "${file.name}". Verifique se há tabela [Descrição, Quantidade, Unidade] ou linhas no formato "qtd un - descrição".`
     );
   }
-  return packageOrder(file.name, items);
+  return packageOrder(file.name, fallbackItems);
 }
 
-async function parseFromDoc(file: File): Promise<PurchaseOrder> {
-  // .doc binário (CFB/OLE) — mammoth não suporta. Tenta primeiro,
-  // cai para extração best-effort se falhar.
+/* -------------------- extração por formato -------------------- */
+
+interface ExtractResult {
+  rawText: string;
+  fallbackItems: OrderItem[];
+}
+
+async function extractTextAndFallback(
+  file: File,
+  ext: string
+): Promise<ExtractResult> {
+  if (ext === 'docx') return extractFromDocx(file);
+  if (ext === 'doc') return extractFromDoc(file);
+  if (ext === 'pdf') return extractFromPdf(file);
+  return extractFromTxt(file);
+}
+
+async function extractFromDocx(file: File): Promise<ExtractResult> {
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.convertToHtml({ arrayBuffer });
+  const doc = new DOMParser().parseFromString(result.value, 'text/html');
+
+  const rawText = sanitizeText(doc.body?.textContent || '');
+
+  // fallback: primeiro tenta tabelas estruturadas, depois texto plano
+  let fallbackItems: OrderItem[] = [];
+  const tables = doc.querySelectorAll('table');
+  if (tables.length > 0) {
+    fallbackItems = extractFromHtmlTables(tables);
+  }
+  if (fallbackItems.length === 0) {
+    fallbackItems = extractFromPlainText(rawText);
+  }
+  return { rawText, fallbackItems };
+}
+
+async function extractFromDoc(file: File): Promise<ExtractResult> {
   let rawText = '';
   try {
     const arrayBuffer = await file.arrayBuffer();
@@ -61,44 +108,26 @@ async function parseFromDoc(file: File): Promise<PurchaseOrder> {
     rawText = await readDocAsBestEffortText(file);
   }
   rawText = sanitizeText(rawText);
-  const items = extractFromPlainText(rawText);
-  if (items.length === 0) {
-    throw new Error(
-      'Não consegui extrair itens do .doc. Recomendamos converter para .docx ou .txt (UTF-8) para melhor precisão.'
-    );
-  }
-  return packageOrder(file.name, items);
+  return { rawText, fallbackItems: extractFromPlainText(rawText) };
 }
 
-async function parseFromTxt(file: File): Promise<PurchaseOrder> {
-  const text = sanitizeText(await readFileAsUtf8(file));
-  const items = extractFromPlainText(text);
-  if (items.length === 0) {
-    throw new Error(
-      'Nenhum item identificado no .txt. Use uma linha por item, no formato "qtd un - descrição" ou "descrição - qtd un".'
-    );
-  }
-  return packageOrder(file.name, items);
+async function extractFromTxt(file: File): Promise<ExtractResult> {
+  const rawText = sanitizeText(await readFileAsUtf8(file));
+  return { rawText, fallbackItems: extractFromPlainText(rawText) };
 }
 
-async function parseFromPdf(file: File): Promise<PurchaseOrder> {
+async function extractFromPdf(file: File): Promise<ExtractResult> {
   const lines = await extractPdfLines(file);
-  // 1ª tentativa: detectar colunas (Descrição/Qtd/Unidade) por posição x
-  let items = extractFromPdfColumns(lines);
-  // 2ª tentativa: texto plano usando heurísticas existentes
-  if (items.length === 0) {
-    const flat = sanitizeText(lines.map((l) => l.text).join('\n'));
-    items = extractFromPlainText(flat);
+  const rawText = sanitizeText(lines.map((l) => l.text).join('\n'));
+  // fallback: detecção por colunas → se nada, regex texto plano
+  let fallbackItems = extractFromPdfColumns(lines);
+  if (fallbackItems.length === 0) {
+    fallbackItems = extractFromPlainText(rawText);
   }
-  if (items.length === 0) {
-    throw new Error(
-      `Não consegui extrair itens do PDF "${file.name}". O layout pode não ser reconhecível — tente exportar a ordem como .docx ou .txt.`
-    );
-  }
-  return packageOrder(file.name, items);
+  return { rawText, fallbackItems };
 }
 
-/* -------------------- helpers -------------------- */
+/* -------------------- helpers (fallback paths) -------------------- */
 
 function extractFromHtmlTables(tables: NodeListOf<HTMLTableElement>): OrderItem[] {
   let chosenTable: HTMLTableElement | null = null;
@@ -146,13 +175,7 @@ function extractFromHtmlTables(tables: NodeListOf<HTMLTableElement>): OrderItem[
         ? sanitizeText(cells[colUni]?.textContent || '').trim() || 'un'
         : 'un';
 
-    items.push({
-      id: `oi_${i}_${uid()}`,
-      descricao: desc,
-      descricaoNormalizada: normalizar(desc),
-      quantidade: qtd,
-      unidade: uni,
-    });
+    items.push(makeItem(desc, qtd, uni, items.length));
   }
   return items;
 }
@@ -165,18 +188,14 @@ function extractFromPlainText(text: string): OrderItem[] {
 
   const items: OrderItem[] = [];
   for (const line of lines) {
-    // ignora cabeçalhos comuns
     if (/^(item|produto|descri|qtd|unidade|tabela|lista)\s*[:\-]?$/i.test(line)) continue;
 
-    // Padrão TSV/CSV: separadores tab|;|múltiplos espaços
     const parts = line.split(/\t|\s{2,}|;|\|/).map((p) => p.trim()).filter(Boolean);
     if (parts.length >= 3) {
-      // tenta achar uma coluna numérica e uma textual longa
       let desc = '';
       let qtd = 1;
       let uni = 'un';
       let descIdx = -1;
-      // descrição é o token mais longo
       let maxLen = 0;
       parts.forEach((p, i) => {
         if (p.length > maxLen && !/^\d+([.,]\d+)?$/.test(p)) {
@@ -201,9 +220,7 @@ function extractFromPlainText(text: string): OrderItem[] {
       }
     }
 
-    // Padrão "10 un - descrição" ou "10 un descrição"
     const m1 = line.match(/^(\d+(?:[.,]\d+)?)\s*([a-záéíóúçã.]{1,8})?\s*[-–—:.]?\s*(.+)$/i);
-    // Padrão "descrição - 10 un"
     const m2 = line.match(/^(.+?)\s*[-–—:]\s*(\d+(?:[.,]\d+)?)\s*([a-záéíóúçã.]{1,8})?$/i);
 
     let desc = '', qtd = 1, uni = 'un';
@@ -260,11 +277,6 @@ interface OrderColsMap {
   unidade: number | null;
 }
 
-/**
- * Tenta extrair itens da ordem em PDF localizando uma linha de cabeçalho
- * (descrição + qtd) e mapeando posições x. Funciona pra PDFs gerados com
- * texto extraível (não-imagem).
- */
 function extractFromPdfColumns(lines: PdfTextLine[]): OrderItem[] {
   const cols = detectOrderColumns(lines);
   if (!cols) return [];
@@ -308,13 +320,7 @@ function extractFromPdfColumns(lines: PdfTextLine[]): OrderItem[] {
     let uni = (buckets.unidade.join(' ').trim() || 'un').toLowerCase();
     uni = uni.replace(/[.,;:]+$/, '').trim() || 'un';
 
-    items.push({
-      id: `oi_${items.length}_${uid()}`,
-      descricao: desc,
-      descricaoNormalizada: normalizar(desc),
-      quantidade: qtd,
-      unidade: uni,
-    });
+    items.push(makeItem(desc, qtd, uni, items.length));
   }
 
   return items;

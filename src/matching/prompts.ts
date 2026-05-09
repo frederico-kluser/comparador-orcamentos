@@ -1,6 +1,10 @@
 /**
  * Prompts isolados (versionáveis) para os módulos LLM:
- *  - CLASSIFY_SYSTEM_PROMPT: extrai a tabela de itens de um documento bruto.
+ *  - CLASSIFY_ORDER_SYSTEM_PROMPT: limpa o texto bruto da LISTA MESTRE (docx/
+ *    pdf/txt do usuário), descartando cabeçalhos de seção, contexto do projeto,
+ *    totais e observações; produz a lista canônica de itens.
+ *  - CLASSIFY_SYSTEM_PROMPT: extrai a tabela de itens de uma PROPOSTA bruta
+ *    (PDF do fornecedor). Inclui valores monetários e flag de promoção.
  *  - MATCHER_SYSTEM_PROMPT: correlaciona termos da proposta com a lista mestre.
  *    Versão nova com extração de specs (CoT), hard-fail por divergência crítica
  *    e few-shot com NEGATIVOS HARD (quase-colisões — caso real desta base).
@@ -9,6 +13,60 @@
  *
  * Ver PLANO_PICA.md §5.1.3 e §6.2 para a especificação completa.
  */
+
+export const CLASSIFY_ORDER_SYSTEM_PROMPT = `Você recebe o TEXTO BRUTO de uma LISTA MESTRE de materiais (construção/elétrica brasileiros) que o usuário quer comprar. O documento veio de um .docx/.pdf/.txt e tem ruído: cabeçalhos de seção, contexto do projeto, observações, totais. Sua tarefa é DEVOLVER A LISTA LIMPA dos itens canônicos, sem inventar nada.
+
+REGRAS DURAS:
+1. Devolva UM objeto por item DISTINTO a comprar, com {nome, quantidade, unidade}. Nada mais.
+2. PRESERVE o nome do item literalmente como veio no documento. Esta é a base canônica — propostas serão comparadas contra estes nomes. NÃO traduza, NÃO conserte typos do nome do produto, NÃO reescreva. Apenas: aparar espaços nas pontas, decodificar entidades HTML (&quot; → "), unificar espaços duplos.
+3. NORMALIZE APENAS A UNIDADE para a forma humana em pt-BR (singular se qtd=1, plural se qtd>1):
+   BR / br      → barra(s)
+   PC / pç / pc → peça(s)
+   UN / un      → unidade(s)
+   M  / m  / MT / mt → metro(s)
+   M²           → metro(s) quadrado(s)
+   RL / rl      → rolo(s)
+   PCT / pct    → pacote(s)
+   CEN / cen    → peça(s)         [convenção do projeto: cento conta como peça]
+   CX / cx      → caixa(s)
+   KG / kg      → quilo(s)
+   PAR / par    → par(es)
+   L / l        → litro(s)
+   JG / jg      → jogo(s)
+   KIT / kit    → kit(s)
+   PT / pt      → pote(s)
+4. IGNORE estes tipos de linha (NÃO produza item):
+   - Cabeçalhos de seção em CAIXA-ALTA terminados em ":" (ex.: "INFRA-ESTRUTURA SALA DE BOMBAS RECALQUE:", "CABOS ALIMENTADORES PAINÉIS:", "TERMINAIS PARA EMENDAS E TERMINAÇÕES:").
+   - Linhas de contexto do projeto sem qtd+unidade (ex.: "Levantamento de materiais para...", "BOMBA RECALQUE (6X)/DRENAGEM (2X)/CASCATA (2X)").
+   - Totais/subtotais/observações/condições de pagamento/dados do cliente/CNPJ/endereço/datas/assinaturas.
+   - Linhas em branco, números soltos, números de página.
+5. MANTENHA DUPLICATAS quando o mesmo item aparecer 2+ vezes com qtds DIFERENTES — são pedidos para seções DIFERENTES e o usuário precisa de ambos. Ex.: "42 m- Cabo 10mm 750V preto" e "45 m- Cabo 10mm 750V preto" produzem 2 entradas. Se aparecer DUAS vezes com a MESMA qtd e mesmo nome, ainda assim mantenha — não tente desduplicar.
+6. SE UMA DESCRIÇÃO QUEBROU EM 2 LINHAS no documento, faça MERGE em um item só.
+7. Se quantidade ou unidade forem AMBÍGUAS, use null nesse campo (o usuário corrige depois). NÃO chute.
+8. Se a linha não tem aparência de item (sem nome de produto identificável OU sem números coerentes), pule. Melhor perder um item do que fabricar um.
+
+EXEMPLOS DE TRANSFORMAÇÃO:
+  "6 br- Eletrocalha 100x100 perfurada #20 (3m)"
+    → {"nome":"Eletrocalha 100x100 perfurada #20 (3m)","quantidade":6,"unidade":"barras"}
+  "200 pç- Parafuso cabeça lentilha de 1/4 x 1/2 com porca e arruela lisa"
+    → {"nome":"Parafuso cabeça lentilha de 1/4 x 1/2 com porca e arruela lisa","quantidade":200,"unidade":"peças"}
+  "1 br- Eletroduto PVC 1 1/2 preto"
+    → {"nome":"Eletroduto PVC 1 1/2 preto","quantidade":1,"unidade":"barra"}
+  "2 br- Eletroduto PVC 1\\" preto"
+    → {"nome":"Eletroduto PVC 1\\" preto","quantidade":2,"unidade":"barras"}
+  "INFRA-ESTRUTURA SALA DE BOMBAS RECALQUE:"
+    → IGNORAR (cabeçalho de seção)
+  "BOMBA PISCINA 1, 2 E RESERVA"
+    → IGNORAR (contexto do projeto)
+  "CABOS ALIMENTADORES PAINÉIS:"
+    → IGNORAR (cabeçalho de seção)
+  "1 pt- Vaselina 400g"
+    → {"nome":"Vaselina 400g","quantidade":1,"unidade":"pote"}
+
+FORMATO DE SAÍDA: APENAS JSON válido, sem markdown, sem texto fora:
+{"items":[{"nome":"...","quantidade":N|null,"unidade":"..."|null}, ...]}
+
+A ordem das entradas DEVE seguir a ordem do documento original.`;
 
 export const CLASSIFY_SYSTEM_PROMPT = `Você recebe o texto BRUTO de um orçamento/proposta comercial brasileira de materiais de construção/elétrica. Sua tarefa é IDENTIFICAR a tabela de itens e devolver uma lista estruturada.
 
