@@ -1,42 +1,18 @@
-import mammoth from 'mammoth';
 import type { SupplierLineItem, SupplierQuote } from '@/types';
 import { uid } from '@/lib/utils';
-import { readDocAsBestEffortText, readFileAsUtf8 } from '@/lib/textIO';
-import { sanitizeText } from '@/lib/textSanitize';
+import { extractTextFromFile } from '@/lib/extractText';
 import { classifyDocumentLLM } from '@/matching/llmClassifyDocument';
 
 /**
- * Parser de DOCX/DOC/TXT — programação só extrai texto bruto.
- * A LLM faz toda a classificação (colunas, unidades, valores, promoção).
+ * Parser unificado de PROPOSTA / NOTA do fornecedor.
+ * Recebe qualquer formato suportado (.docx, .doc, .pdf, .txt, .xlsx, .xls).
+ * 1) extractTextFromFile dá o texto bruto.
+ * 2) classifyDocumentLLM extrai itens, valores e nome do fornecedor.
+ * 3) Se LLM devolver supplierName vazio (caso comum quando o doc não tem
+ *    razão social explícita — ex.: planilha simples), usa filename.
  */
-export async function parseSupplierTextFile(file: File): Promise<SupplierQuote> {
-  const ext = (file.name.split('.').pop() || '').toLowerCase();
-  let rawText = '';
-
-  if (ext === 'docx') {
-    const arrayBuffer = await file.arrayBuffer();
-    const r = await mammoth.extractRawText({ arrayBuffer });
-    rawText = r.value || '';
-  } else if (ext === 'doc') {
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const r = await mammoth.extractRawText({ arrayBuffer });
-      rawText = r.value || '';
-    } catch {
-      rawText = '';
-    }
-    if (!rawText.trim()) rawText = await readDocAsBestEffortText(file);
-  } else if (ext === 'txt') {
-    rawText = await readFileAsUtf8(file);
-  } else {
-    throw new Error(`Formato não suportado: .${ext}`);
-  }
-
-  rawText = sanitizeText(rawText);
-  if (!rawText.trim()) {
-    throw new Error(`Arquivo "${file.name}" não tem texto extraível.`);
-  }
-
+export async function parseSupplierFile(file: File): Promise<SupplierQuote> {
+  const { rawText } = await extractTextFromFile(file);
   const classified = await classifyDocumentLLM(rawText, file.name);
 
   if (classified.items.length === 0) {
@@ -59,11 +35,17 @@ export async function parseSupplierTextFile(file: File): Promise<SupplierQuote> 
     matchScore: null,
   }));
 
+  const supplierName =
+    classified.supplierName.trim() || file.name.replace(/\.[^.]+$/, '');
+
   return {
     id: uid(),
     fileName: file.name,
-    supplierName: classified.supplierName,
+    supplierName,
     status: 'processing',
     items,
   };
 }
+
+/** @deprecated Use parseSupplierFile — agora aceita todos os formatos. */
+export const parseSupplierTextFile = parseSupplierFile;

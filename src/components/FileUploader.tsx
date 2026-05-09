@@ -1,31 +1,26 @@
 import { useDropzone } from 'react-dropzone';
 import { useStore } from '@/store';
 import { parseOrderFile } from '@/parser/orderParser';
-import { parsePdf } from '@/parser/pdfParser';
-import { parseSupplierTextFile } from '@/parser/supplierTextParser';
+import { parseSupplierFile } from '@/parser/supplierTextParser';
 import { runWithLimit } from '@/lib/concurrency';
 
 const MAX_PARALLEL_NOTES = 5;
 
-const ORDER_ACCEPT = {
+const SHARED_ACCEPT = {
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
   'application/msword': ['.doc'],
   'application/pdf': ['.pdf'],
   'text/plain': ['.txt'],
-};
-
-const NOTE_ACCEPT = {
-  'application/pdf': ['.pdf'],
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-  'application/msword': ['.doc'],
-  'text/plain': ['.txt'],
+  'text/csv': ['.csv'],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+  'application/vnd.ms-excel': ['.xls'],
 };
 
 export function OrderUploader() {
   const { order, setOrder, setError, setActiveTab } = useStore();
 
   const dz = useDropzone({
-    accept: ORDER_ACCEPT,
+    accept: SHARED_ACCEPT,
     maxFiles: 1,
     onDrop: async (files) => {
       try {
@@ -58,7 +53,8 @@ export function OrderUploader() {
         </div>
       ) : (
         <div className="hint">
-          Arraste ou clique para enviar <strong>.docx · .doc · .pdf · .txt</strong>
+          Arraste ou clique para enviar{' '}
+          <strong>.docx · .pdf · .xlsx · .xls · .txt · .csv · .doc</strong>
         </div>
       )}
     </div>
@@ -77,7 +73,7 @@ export function NotesUploader() {
   } = useStore();
 
   const dz = useDropzone({
-    accept: NOTE_ACCEPT,
+    accept: SHARED_ACCEPT,
     multiple: true,
     disabled: !order,
     onDrop: async (files) => {
@@ -109,9 +105,7 @@ export function NotesUploader() {
       const jobs = files.map((file, i) => ({ file, phId: placeholders[i].id }));
       await runWithLimit(jobs, MAX_PARALLEL_NOTES, async ({ file, phId }) => {
         try {
-          const ext = (file.name.split('.').pop() || '').toLowerCase();
-          const supplier =
-            ext === 'pdf' ? await parsePdf(file) : await parseSupplierTextFile(file);
+          const supplier = await parseSupplierFile(file);
           // substitui o placeholder pelo supplier real preservando a posição
           useStore.setState((s) => ({
             suppliers: s.suppliers.map((x) =>
@@ -149,7 +143,8 @@ export function NotesUploader() {
           </>
         ) : (
           <>
-            Arraste um ou vários: <strong>.pdf · .docx · .doc · .txt</strong> (UTF-8)
+            Arraste um ou vários:{' '}
+            <strong>.pdf · .docx · .xlsx · .xls · .txt · .csv · .doc</strong>
           </>
         )}
       </div>

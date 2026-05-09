@@ -13,7 +13,9 @@ const ClassifiedItemSchema = z.object({
 });
 
 const ClassifyResponseSchema = z.object({
-  supplierName: z.string().min(1),
+  // tolerante a vazio: documentos sem razão social (planilhas simples,
+  // listas internas) caem no fallback de filename feito no chamador.
+  supplierName: z.string(),
   items: z.array(ClassifiedItemSchema),
 });
 
