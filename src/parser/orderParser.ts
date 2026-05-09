@@ -8,48 +8,52 @@ import { isLLMConfigured } from '@/matching/llmDocumentClient';
 /**
  * Pipeline da LISTA MESTRE (qualquer formato suportado):
  *  1. extractTextFromFile → texto bruto único.
- *  2. Se LLM configurada → classifyOrderLLM → items canônicos.
- *  3. Se LLM falhar OU vier vazia → fallback regex sobre o texto bruto.
+ *  2. Se LLM configurada: classifyOrderLLM produz a lista limpa. Se a LLM
+ *     devolver vazio, ABORTA (não cai no regex — regex em texto-com-ruído
+ *     produz itens fantasma, foi a causa do bug do .doc).
+ *  3. Se LLM NÃO configurada (modo offline): regex sobre o texto bruto,
+ *     útil só pra .txt/.csv bem formatados.
  */
 export async function parseOrderFile(file: File): Promise<PurchaseOrder> {
   const ext = getExt(file.name);
   if (!isSupportedExt(ext)) {
     throw new Error(
-      `Formato não suportado: .${ext}. Use .docx, .pdf, .xlsx, .xls ou .txt.` +
+      `Formato não suportado: .${ext}. Use .docx, .pdf, .xlsx, .xls, .txt ou .csv.` +
         ` Para arquivos .doc legados, salve como .docx no Word/LibreOffice.`
     );
   }
 
   const { rawText } = await extractTextFromFile(file);
 
-  if (isLLMConfigured() && rawText.trim().length > 0) {
-    try {
-      const resp = await classifyOrderLLM(rawText, file.name);
-      const items = resp.items
-        .filter((it) => it.nome && it.nome.trim().length > 0)
-        .map((it, i) =>
-          makeItem(
-            it.nome.trim(),
-            typeof it.quantidade === 'number' && !Number.isNaN(it.quantidade)
-              ? it.quantidade
-              : 1,
-            (it.unidade || '').trim() || 'un',
-            i
-          )
-        );
-      if (items.length > 0) return packageOrder(file.name, items);
-      // eslint-disable-next-line no-console
-      console.warn('[order] LLM retornou lista vazia — caindo para fallback regex');
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn('[order] LLM falhou — caindo para fallback regex:', e);
+  if (isLLMConfigured()) {
+    const resp = await classifyOrderLLM(rawText, file.name);
+    const items = resp.items
+      .filter((it) => it.nome && it.nome.trim().length > 0)
+      .map((it, i) =>
+        makeItem(
+          it.nome.trim(),
+          typeof it.quantidade === 'number' && !Number.isNaN(it.quantidade)
+            ? it.quantidade
+            : 1,
+          (it.unidade || '').trim() || 'un',
+          i
+        )
+      );
+    if (items.length === 0) {
+      throw new Error(
+        `A LLM não identificou itens em "${file.name}". O documento pode estar vazio, ` +
+          `ser um PDF escaneado/imagem (sem texto), ou não conter uma lista de itens reconhecível.`
+      );
     }
+    return packageOrder(file.name, items);
   }
 
+  // Modo offline (sem LLM): regex limitado, só funciona pra texto bem formatado.
   const fallbackItems = extractFromPlainText(rawText);
   if (fallbackItems.length === 0) {
     throw new Error(
-      `Não consegui extrair itens de "${file.name}". O documento parece não ter uma lista de itens reconhecível.`
+      `Sem LLM configurada, o regex não identificou itens em "${file.name}". ` +
+        `Configure VITE_OPENROUTER_API_KEY no .env para usar a IA.`
     );
   }
   return packageOrder(file.name, fallbackItems);

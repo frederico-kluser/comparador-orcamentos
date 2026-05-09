@@ -6,9 +6,12 @@ import { runWithLimit } from '@/lib/concurrency';
 
 const MAX_PARALLEL_NOTES = 5;
 
+// .doc binário (Word 97-2003 CFB/OLE) NÃO está aqui de propósito: o conteúdo
+// real fica em piece tables não acessíveis em browser sandboxed e qualquer
+// "extração" produz lixo de metadata (style names, font names, stream names).
+// O usuário precisa converter para .docx ou .pdf no Word/LibreOffice.
 const SHARED_ACCEPT = {
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-  'application/msword': ['.doc'],
   'application/pdf': ['.pdf'],
   'text/plain': ['.txt'],
   'text/csv': ['.csv'],
@@ -54,7 +57,10 @@ export function OrderUploader() {
       ) : (
         <div className="hint">
           Arraste ou clique para enviar{' '}
-          <strong>.docx · .pdf · .xlsx · .xls · .txt · .csv · .doc</strong>
+          <strong>.docx · .pdf · .xlsx · .xls · .txt · .csv</strong>
+          <div style={{ fontSize: 11, marginTop: 4, opacity: 0.7 }}>
+            .doc legado não suportado — salve como .docx ou .pdf antes
+          </div>
         </div>
       )}
     </div>
@@ -144,7 +150,10 @@ export function NotesUploader() {
         ) : (
           <>
             Arraste um ou vários:{' '}
-            <strong>.pdf · .docx · .xlsx · .xls · .txt · .csv · .doc</strong>
+            <strong>.pdf · .docx · .xlsx · .xls · .txt · .csv</strong>
+            <div style={{ fontSize: 11, marginTop: 4, opacity: 0.7 }}>
+              .doc legado não suportado — salve como .docx ou .pdf antes
+            </div>
           </>
         )}
       </div>

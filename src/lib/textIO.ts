@@ -1,11 +1,71 @@
 /**
- * Leitura de texto de .txt e fallback best-effort para .doc binário.
+ * Leitura de texto de .txt e helpers para identificar lixo de extração CFB/OLE.
  *
  * - UTF-8 explícito (não confia no charset do Blob).
  * - Remove BOM.
- * - .doc binário (CFB/OLE): tenta UTF-16 LE primeiro (formato real do Word
- *   97-2003), e cai pra varredura ASCII/Latin-1 se necessário.
+ * - `looksLikeCfbGarbage`: detecta strings tipicamente vazadas dos streams
+ *   internos do .doc binário quando alguém tenta decodificá-lo como texto
+ *   (Root Entry, WordDocument, SummaryInformation, etc.). Usado para abortar
+ *   pipelines que receberam lixo no lugar do conteúdo real.
+ * - `readDocAsBestEffortText` está marcada @deprecated — produzia mais ruído
+ *   do que sinal pra .doc binário (o conteúdo real fica em piece tables CFB,
+ *   não acessíveis via byte-scan).
  */
+
+const CFB_TELLTALES = [
+  // nomes de stream CFB/OLE típicos do .doc/.xls binário
+  'Root Entry',
+  'WordDocument',
+  'SummaryInformation',
+  'DocumentSummaryInformation',
+  'CompObj',
+  'ObjectPool',
+  '_PictureBullets',
+  '1Table',
+  '0Table',
+  // estilos default do Word (PT-BR + EN) que aparecem nos streams de metadata
+  'Tabela normal',
+  'Fonte parág. padrão',
+  'Parágrafo da Lista',
+  'Default Paragraph Font',
+  'No List',
+  'Table Normal',
+  // famílias de fonte sempre embutidas — se aparecerem como "itens", é meta
+  'Times New Roman',
+  'Cambria Math',
+  'Wingdings',
+  'Calibri',
+];
+
+/**
+ * Heurística para detectar texto que veio de byte-scan de um .doc binário
+ * (lixo de metadata CFB) em vez de conteúdo real. Se 3+ marcadores
+ * aparecerem, considera quebrado. Threshold 3 evita falso-positivo num
+ * documento real que cite uma fonte ou um nome de estilo isoladamente.
+ */
+export function looksLikeCfbGarbage(text: string): boolean {
+  if (!text) return true;
+  let hits = 0;
+  for (const t of CFB_TELLTALES) {
+    if (text.includes(t)) {
+      hits++;
+      if (hits >= 3) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Mensagem-padrão pra quando um .doc legado não pode ser processado.
+ * Inclui passos acionáveis em PT-BR.
+ */
+export const DOC_LEGACY_ERROR =
+  'Arquivos .doc legados (Word 97-2003, binário CFB/OLE) não são suportados ' +
+  'no navegador — o conteúdo real fica em piece tables internas que precisam ' +
+  'de parser especializado indisponível em ambiente sandbox.\n\n' +
+  'Para resolver: abra o arquivo no Word ou LibreOffice → Arquivo → ' +
+  'Salvar Como → escolha "Documento do Word (.docx)" ou "PDF" → envie o ' +
+  'arquivo convertido.';
 
 export async function readFileAsUtf8(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();

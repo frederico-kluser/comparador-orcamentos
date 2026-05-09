@@ -20,8 +20,10 @@ melhor à pior proposta). Tela 4 ganha refac de célula.
 | 4 — Comparação cruzada   | `[REFAC]`         | `src/components/ComparisonTable.tsx`           |
 | Worker pool 5 simultâneos| `[EXISTE]`        | `src/lib/concurrency.ts` + `src/components/FileUploader.tsx` |
 | Normalização de unidades | `[EXISTE, ampliar]` | `src/matching/llmClassifyDocument.ts:26-36`  |
-| **Limpeza LLM da lista mestre** | `[NOVO CRÍTICO]` | `src/matching/llmClassifyOrder.ts` (a criar)   |
-| Parser da lista mestre   | `[REFAC]`         | `src/parser/orderParser.ts`                    |
+| **Limpeza LLM da lista mestre** | `[EXISTE]` | `src/matching/llmClassifyOrder.ts`             |
+| Parser da lista mestre   | `[EXISTE]`        | `src/parser/orderParser.ts`                    |
+| Extração unificada (texto bruto) | `[EXISTE]` | `src/lib/extractText.ts`                       |
+| **`.doc` legado**: NÃO suportado, erro acionável | `[POLICY]` | `src/lib/textIO.ts:DOC_LEGACY_ERROR` |
 | Matcher LLM              | `[REFAC CRÍTICO]` | `src/matching/llmDocumentClient.ts`            |
 | Pré-filtro lexical       | `[NOVO]`          | `src/matching/preFilter.ts` (a criar)          |
 | Cálculo / ranking JS     | `[EXISTE+NOVO]`   | `src/pricing/calculator.ts` + `src/pricing/ranker.ts` (a criar) |

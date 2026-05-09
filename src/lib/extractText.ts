@@ -1,6 +1,6 @@
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
-import { readDocAsBestEffortText, readFileAsUtf8 } from './textIO';
+import { DOC_LEGACY_ERROR, looksLikeCfbGarbage, readFileAsUtf8 } from './textIO';
 import { sanitizeText } from './textSanitize';
 import { extractPdfLines } from './pdfText';
 
@@ -8,18 +8,24 @@ import { extractPdfLines } from './pdfText';
  * Extração de TEXTO BRUTO unificada por extensão. Cada formato tem seu próprio
  * extrator; nenhuma lógica de parsing/classificação aqui — só texto plano.
  *
- * Formatos suportados: .docx, .doc, .pdf, .txt, .xlsx, .xls.
+ * Formatos suportados: .docx, .pdf, .txt, .csv, .xlsx, .xls, e (best-effort) .doc.
  *
- * Estratégia .doc (CFB/OLE binário): mammoth raw text → fallback latin-1/UTF-16
- * (`readDocAsBestEffortText`) → se ambos vazios, joga erro com mensagem
- * acionável ("salve como .docx"). Sandboxed Electron renderer não permite
- * word-extractor (Node-only), por isso a estratégia best-effort.
+ * Estratégia .doc (CFB/OLE binário, Word 97-2003):
+ *   - tenta `mammoth.extractRawText` (oficialmente .docx, mas às vezes lê
+ *     .doc moderno);
+ *   - se devolver vazio OU lixo CFB (detectado por `looksLikeCfbGarbage`,
+ *     que procura nomes de stream tipo "Root Entry"/"WordDocument"/
+ *     "SummaryInformation" e estilos default que vazam quando o byte-scan
+ *     pega metadata em vez do conteúdo real), JOGA erro acionável apontando
+ *     o caminho de conversão pra .docx/.pdf.
+ *   - NÃO usa o byte-scan latin-1 antigo (`readDocAsBestEffortText`): em todos
+ *     os testes ele extraiu metadata em vez do conteúdo, e a LLM/regex
+ *     downstream criava itens fantasmas.
  */
 
 export type ExtractSource =
   | 'docx'
   | 'doc'
-  | 'doc-best-effort'
   | 'pdf'
   | 'txt'
   | 'csv'
@@ -46,7 +52,7 @@ export async function extractTextFromFile(file: File): Promise<ExtractResult> {
   const ext = getExt(file.name);
   if (!isSupportedExt(ext)) {
     throw new Error(
-      `Formato não suportado: .${ext}. Use .docx, .pdf, .xlsx, .xls ou .txt.` +
+      `Formato não suportado: .${ext}. Use .docx, .pdf, .xlsx, .xls, .txt ou .csv.` +
         ` Para arquivos .doc legados, salve como .docx no Word/LibreOffice.`
     );
   }
@@ -60,20 +66,21 @@ export async function extractTextFromFile(file: File): Promise<ExtractResult> {
     rawText = r.value || '';
     source = 'docx';
   } else if (ext === 'doc') {
-    // mammoth às vezes consegue ler .doc novos; senão, best-effort binário.
+    let mammothText = '';
     try {
       const arrayBuffer = await file.arrayBuffer();
       const r = await mammoth.extractRawText({ arrayBuffer });
-      rawText = r.value || '';
+      mammothText = (r.value || '').trim();
     } catch {
-      rawText = '';
+      mammothText = '';
     }
-    if (!rawText.trim()) {
-      rawText = await readDocAsBestEffortText(file);
-      source = 'doc-best-effort';
-    } else {
-      source = 'doc';
+    // mammoth oficialmente só suporta .docx. Se conseguir, validamos com a
+    // stop-list de strings CFB — se vier metadata em vez de conteúdo, abortar.
+    if (!mammothText || looksLikeCfbGarbage(mammothText)) {
+      throw new Error(DOC_LEGACY_ERROR);
     }
+    rawText = mammothText;
+    source = 'doc';
   } else if (ext === 'pdf') {
     const lines = await extractPdfLines(file);
     rawText = lines.map((l) => l.text).join('\n');
@@ -91,12 +98,9 @@ export async function extractTextFromFile(file: File): Promise<ExtractResult> {
 
   rawText = sanitizeText(rawText);
 
+  // Sanity check pós-sanitização: mesmo após mammoth, conteúdo pode vir vazio
+  // ou ainda parecer lixo CFB num caso patológico. Guarda extra.
   if (!rawText.trim()) {
-    if (ext === 'doc') {
-      throw new Error(
-        `Não consegui extrair texto de "${file.name}" (.doc legado). Abra o arquivo no Word ou LibreOffice e use Salvar como → .docx (ou .pdf), depois envie de novo.`
-      );
-    }
     if (ext === 'pdf') {
       throw new Error(
         `Não consegui extrair texto de "${file.name}". O PDF parece ser escaneado/imagem (sem camada de texto). Tente exportar como .docx, .xlsx ou .txt.`
@@ -105,6 +109,9 @@ export async function extractTextFromFile(file: File): Promise<ExtractResult> {
     throw new Error(
       `Não consegui extrair texto de "${file.name}". O arquivo parece vazio ou corrompido.`
     );
+  }
+  if (looksLikeCfbGarbage(rawText)) {
+    throw new Error(DOC_LEGACY_ERROR);
   }
 
   return { rawText, source };
