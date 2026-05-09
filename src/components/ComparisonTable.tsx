@@ -60,9 +60,12 @@ export function ComparisonTable() {
                       className={'right' + (isBest ? ' best' : '')}
                       style={{ color: !cell?.subtotal ? 'var(--c-muted)' : undefined }}
                     >
-                      {cell?.subtotal ? (
+                      {cell?.subtotal && cell.valorUnit ? (
                         <>
-                          {formatBRL(cell.subtotal)}
+                          <div style={{ fontSize: 12, color: 'var(--c-muted)' }}>
+                            {formatBRL(cell.valorUnit)}/{row.product.unidade}
+                          </div>
+                          <div style={{ fontWeight: 600 }}>{formatBRL(cell.subtotal)}</div>
                           {cell.matchSource && (
                             <div style={{ fontSize: 10, color: 'var(--c-muted)' }}>
                               {sourceLabel(cell.matchSource)}

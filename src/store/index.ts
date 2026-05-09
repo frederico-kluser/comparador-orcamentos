@@ -133,10 +133,7 @@ export const useStore = create<AppState>((set, get) => ({
     // 2) LLM em UMA request por documento (apenas para os ainda não identificados)
     if (stillUnmatched.length > 0 && isLLMConfigured()) {
       try {
-        const resp = await callDocumentMatchLLM(
-          stillUnmatched,
-          order.items.map((p) => ({ id: p.id, descricao: p.descricao }))
-        );
+        const resp = await callDocumentMatchLLM(stillUnmatched, order.items);
 
         for (const m of resp.matches) {
           if (!m.productId) continue;

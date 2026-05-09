@@ -1,44 +1,88 @@
 import { z } from 'zod';
+import type { OrderItem } from '../types';
 import { callOpenAICompatJSONStream } from './llmStream';
+import { MATCHER_SYSTEM_PROMPT } from './prompts';
+import { buildMasterIndex, topKCandidates } from './preFilter';
 
 /**
- * LLM em modo "uma request por documento":
- * envia TODOS os items ainda não identificados de um fornecedor + o catálogo
- * canônico, e recebe os matches em uma única chamada.
- *
- * Modelo padrão: deepseek-v4-pro (override via VITE_DEEPSEEK_MODEL_MATCH).
+ * Matcher Stage 2 (refac):
+ *  - Pré-filtro lexical (fuse.js) reduz a lista mestre a top-K candidatos por termo.
+ *  - Uma única request ao LLM por fornecedor, em batch, com extração de specs (CoT)
+ *    + few-shot com negativos hard. Ver prompts.ts e PLANO_PICA §5.
+ *  - Hard-fail JS pós-resposta: rejeita match com mismatched_specs em campo crítico.
+ *  - Saída externa preserva {itemId, productId, confidence} para não quebrar store.
  */
 
-const MatchRowSchema = z.object({
+const MatchSpecsSchema = z
+  .object({
+    categoria: z.string().nullable().optional(),
+    material: z.string().nullable().optional(),
+    dimensao_principal: z.string().nullable().optional(),
+    dimensao_secundaria: z.string().nullable().optional(),
+    tensao_nominal: z.string().nullable().optional(),
+    corrente_nominal: z.string().nullable().optional(),
+    numero_polos: z.string().nullable().optional(),
+    acabamento: z.string().nullable().optional(),
+    cor: z.string().nullable().optional(),
+    marca: z.string().nullable().optional(),
+    norma_abnt: z.string().nullable().optional(),
+    ncm: z.string().nullable().optional(),
+    unidade_comercial: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+const MatcherDecisionSchema = z.object({
   itemId: z.string(),
-  productId: z.string().nullable(),
+  candidate_id: z.string().nullable(),
+  decision: z.enum(['match', 'no_match', 'uncertain']),
   confidence: z.number().min(0).max(1),
+  specs_proposta: MatchSpecsSchema.optional().default({}),
+  specs_master: MatchSpecsSchema.nullable().optional().default(null),
+  mismatched_specs: z.array(z.string()).optional().default([]),
+  reasoning: z.string().optional().default(''),
 });
 
 const MatchResponseSchema = z.object({
-  matches: z.array(MatchRowSchema),
+  matches: z.array(MatcherDecisionSchema),
 });
 
-export type DocumentMatchResponse = z.infer<typeof MatchResponseSchema>;
-
-const SYSTEM_PROMPT = `Você é um assistente especializado em correspondência de produtos em orçamentos comerciais brasileiros (materiais de construção/elétrica). Os itens recebidos JÁ FORAM CLASSIFICADOS por outra etapa (descrição, quantidade e unidade já estão limpos). Sua única tarefa: dada uma lista de termos de itens e uma lista de produtos canônicos da ordem de compra, decidir, para cada termo, qual produto canônico corresponde — ou null se nenhum corresponder claramente.
-
-REGRAS RÍGIDAS:
-1. Para cada itemId fornecido, você DEVE retornar exatamente um objeto em "matches" com o mesmo itemId.
-2. productId só pode ser um dos IDs do catálogo OU null. NÃO invente IDs.
-3. confidence é número de 0.0 a 1.0 refletindo sua certeza.
-4. Foque em: descrição técnica, dimensões/bitolas (1/2", 3/4", 1.1/2", M8, 100x100), material (PVC/AÇO/COBRE), código/SKU/NCM se vier no termo, e sinônimos do comércio brasileiro (ex.: "eletroduto" ≈ "eletrod rig", "bucha" ≈ "BUA", "arruela" ≈ "ARA").
-5. IGNORE pequenas variações de unidade entre termo e catálogo — a unidade já foi classificada. Concentre-se na identidade do produto.
-6. Se o termo não tem correspondente claro, retorne productId=null com confidence baixa.
-
-FORMATO DE SAÍDA: APENAS JSON, sem texto antes ou depois, com este shape exato:
-{"matches":[{"itemId":"...","productId":"..."|null,"confidence":0.0}]}`;
+export type DocumentMatchResponse = {
+  matches: Array<{ itemId: string; productId: string | null; confidence: number }>;
+};
 
 const LLM_AUTO_CONFIDENCE = 0.85;
 
+const HARD_FAIL_FIELDS = new Set([
+  'dimensao_principal',
+  'dimensao_secundaria',
+  'tensao_nominal',
+  'corrente_nominal',
+  'numero_polos',
+  'categoria',
+  'material',
+  'acabamento',
+]);
+
+/**
+ * Cinto + suspensório: mesmo se o LLM violar a regra, o JS rejeita o match
+ * quando há divergência em campo crítico. Para "cor" só vale como hard-fail
+ * se a categoria for cabo (cor em cabo é load-bearing).
+ */
+function violatesHardFail(d: z.infer<typeof MatcherDecisionSchema>): boolean {
+  const mismatched = d.mismatched_specs ?? [];
+  for (const f of mismatched) {
+    if (HARD_FAIL_FIELDS.has(f)) return true;
+  }
+  if (mismatched.includes('cor')) {
+    const cat = (d.specs_proposta?.categoria ?? '').toString().toLowerCase();
+    if (cat.includes('cabo')) return true;
+  }
+  return false;
+}
+
 export async function callDocumentMatchLLM(
   unmatchedItems: { id: string; rawTerm: string }[],
-  catalogo: { id: string; descricao: string }[]
+  catalogo: OrderItem[]
 ): Promise<DocumentMatchResponse> {
   const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY;
   const baseUrl = import.meta.env.VITE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
@@ -50,20 +94,43 @@ export async function callDocumentMatchLLM(
     );
   }
 
+  if (unmatchedItems.length === 0) return { matches: [] };
+
+  // Pré-filtro: para cada item, top-10 candidatos da master
+  const fuseIndex = buildMasterIndex(catalogo);
+  const itemsWithCandidates = unmatchedItems.map((it) => ({
+    ...it,
+    candidates: topKCandidates(it.rawTerm, fuseIndex, 10),
+  }));
+
+  // Monta o user message: cada item com sua sublista de candidatos
   const userMessage =
-    `CATÁLOGO (produtos canônicos da ordem de compra):\n` +
-    catalogo.map((c) => `- id: "${c.id}" | desc: "${c.descricao}"`).join('\n') +
-    `\n\nITENS DO ORÇAMENTO PARA IDENTIFICAR:\n` +
-    unmatchedItems.map((it) => `- itemId: "${it.id}" | termo: "${it.rawTerm}"`).join('\n') +
-    `\n\nResponda em JSON com {"matches":[...]} contendo um objeto por itemId acima.`;
+    `Para cada item abaixo, escolha UM candidate_id da sua lista de CANDIDATOS — ou null se nenhum for compatível conforme as regras hard-fail.\n\n` +
+    itemsWithCandidates
+      .map((it) => {
+        const candList =
+          it.candidates.length === 0
+            ? '  (sem candidatos pré-filtrados — responda no_match)'
+            : it.candidates
+                .map((c) => `  - id:"${c.id}" desc:"${c.descricao}"`)
+                .join('\n');
+        return (
+          `ITEM\n` +
+          `  itemId:"${it.id}"\n` +
+          `  termo:"${it.rawTerm}"\n` +
+          `  CANDIDATOS:\n${candList}`
+        );
+      })
+      .join('\n\n') +
+    `\n\nResponda em JSON {"matches":[...]} com UM objeto por itemId acima, na mesma ordem.`;
 
   const content = await callOpenAICompatJSONStream({
     apiKey,
     baseUrl,
     model,
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt: MATCHER_SYSTEM_PROMPT,
     userMessage,
-    maxTokens: Math.max(2000, Math.min(16000, 200 + unmatchedItems.length * 80)),
+    maxTokens: Math.max(4000, Math.min(32000, 800 + unmatchedItems.length * 400)),
     logTag: '[match]',
   });
 
@@ -81,15 +148,25 @@ export async function callDocumentMatchLLM(
     throw new Error('Schema de resposta LLM inválido: ' + validated.error.message);
   }
 
-  // sanitiza: productId precisa estar no catálogo
   const validIds = new Set(catalogo.map((c) => c.id));
   const sentItemIds = new Set(unmatchedItems.map((u) => u.id));
+
   const cleaned = validated.data.matches
     .filter((m) => sentItemIds.has(m.itemId))
-    .map((m) => ({
-      ...m,
-      productId: m.productId && validIds.has(m.productId) ? m.productId : null,
-    }));
+    .map((m) => {
+      // Hard-fail JS (cinto + suspensório): se o LLM disse "match" mas existe
+      // divergência crítica, rebaixamos para no_match.
+      const hardFail = violatesHardFail(m);
+      const finalDecision = hardFail && m.decision === 'match' ? 'no_match' : m.decision;
+      const candidateOk =
+        m.candidate_id && validIds.has(m.candidate_id) && finalDecision === 'match';
+
+      return {
+        itemId: m.itemId,
+        productId: candidateOk ? (m.candidate_id as string) : null,
+        confidence: candidateOk ? m.confidence : 0,
+      };
+    });
 
   return { matches: cleaned };
 }

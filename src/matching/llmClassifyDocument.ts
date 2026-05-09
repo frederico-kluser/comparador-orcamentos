@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { callOpenAICompatJSONStream } from './llmStream';
+import { CLASSIFY_SYSTEM_PROMPT } from './prompts';
 
 const ClassifiedItemSchema = z.object({
   rawTerm: z.string().min(1),
@@ -18,31 +19,6 @@ const ClassifyResponseSchema = z.object({
 
 export type ClassifiedItem = z.infer<typeof ClassifiedItemSchema>;
 export type ClassifyResponse = z.infer<typeof ClassifyResponseSchema>;
-
-const SYSTEM_PROMPT = `Você recebe o texto BRUTO de um orçamento/proposta comercial brasileira de materiais de construção/elétrica. Sua tarefa é IDENTIFICAR a tabela de itens e devolver uma lista estruturada.
-
-REGRAS:
-1. Para cada linha de produto, devolva: descrição (rawTerm), quantidade (número), unidade abreviada como veio no documento (unidadeAbrev) e a unidade HUMANIZADA em pt-BR no plural quando qtd > 1, singular quando qtd = 1 (unidadeHumana).
-2. Mapeamento de referência (use, mas adapte se o texto contradisser):
-   BR  → barras (1 → barra)
-   PC  → peças (1 → peça)
-   UN  → unidades (1 → unidade)
-   MT  → metros (1 → metro)
-   RL  → rolos (1 → rolo)
-   PCT → pacotes (1 → pacote)
-   CEN → centos (1 → peça)
-   CX  → caixas (1 → caixa)
-   KG  → quilos (1 → quilo)
-   PAR → pares (1 → par)
-   L   → litros (1 → litro)
-3. Valores monetários vêm em formato BR ("1.234,56" ou "165,95"). Devolva-os normalizados em ponto decimal como string ("1234.56", "165.95"). NUNCA invente valores — copie o que está no documento.
-4. Marque isPromocao=true quando a linha tiver indicador "(P)", "*P*", asterisco de promoção, ou similar (geralmente há uma legenda explicando "produtos com preço promocional").
-5. Identifique o nome do fornecedor (cabeçalho — geralmente uma razão social com LTDA/SA/ME/EIRELI/COMERCIO/DISTRIBUIDORA).
-6. IGNORE linhas de cabeçalho de coluna, rodapé, total geral, CNPJ, endereço, observações, condições de pagamento, dados do cliente.
-7. NÃO INCLUA na lista a linha de TOTAL/SUBTOTAL.
-8. unidadeAbrev pode ser null se o documento não trouxer abreviação explícita.
-9. Responda APENAS JSON válido com este shape exato:
-{"supplierName":"...","items":[{"rawTerm":"...","quantidade":0,"unidadeAbrev":"..."|null,"unidadeHumana":"...","valorUnit":"...","valorTotal":"...","isPromocao":false}]}`;
 
 export async function classifyDocumentLLM(
   rawText: string,
@@ -75,7 +51,7 @@ export async function classifyDocumentLLM(
     apiKey,
     baseUrl,
     model,
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt: CLASSIFY_SYSTEM_PROMPT,
     userMessage,
     maxTokens: 16000,
     logTag: '[classify]',

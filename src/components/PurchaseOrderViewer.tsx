@@ -15,9 +15,9 @@ export function PurchaseOrderViewer() {
             <thead>
               <tr>
                 <th>#</th>
-                <th>Descrição</th>
-                <th className="right">Qtd</th>
-                <th>Un.</th>
+                <th>Nome</th>
+                <th className="right">Quantidade</th>
+                <th>Unidade</th>
               </tr>
             </thead>
             <tbody>

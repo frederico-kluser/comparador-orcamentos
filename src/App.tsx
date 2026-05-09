@@ -4,6 +4,7 @@ import { PurchaseOrderViewer } from '@/components/PurchaseOrderViewer';
 import { SupplierQuotesGrid } from '@/components/SupplierQuotesGrid';
 import { DocumentReviewCarousel } from '@/components/DocumentReviewCarousel';
 import { ComparisonTable } from '@/components/ComparisonTable';
+import { RankingProposals } from '@/components/RankingProposals';
 import { Tabs } from '@/components/Tabs';
 import { isLLMConfigured } from '@/matching/llmDocumentClient';
 
@@ -79,17 +80,18 @@ export default function App() {
                 <button
                   className="btn btn-primary"
                   disabled={!allReviewed}
-                  onClick={() => setActiveTab('comparacao')}
+                  onClick={() => setActiveTab('ranking')}
                 >
                   {allReviewed
-                    ? 'Ver comparação →'
-                    : 'Resolva todos os itens para liberar a comparação'}
+                    ? 'Ver ranking →'
+                    : 'Resolva todos os itens para liberar o ranking'}
                 </button>
               </div>
             )}
           </div>
         )}
 
+        {tab === 'ranking' && <RankingProposals />}
         {tab === 'comparacao' && <ComparisonTable />}
       </main>
 

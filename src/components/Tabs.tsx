@@ -30,8 +30,13 @@ export function Tabs() {
       badgeKind: pendingReview > 0 ? 'warn' : 'normal',
     },
     {
+      id: 'ranking',
+      label: '3. Ranking',
+      disabled: !allReviewed,
+    },
+    {
       id: 'comparacao',
-      label: '3. Comparação',
+      label: '4. Comparação',
       disabled: !allReviewed,
     },
   ];
