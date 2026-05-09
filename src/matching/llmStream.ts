@@ -1,25 +1,37 @@
 /**
- * Cliente OpenAI-compatible (DeepSeek API direto):
- * - streaming SSE (`stream: true`) para resposta em tempo real
- * - desliga thinking via `thinking: { type: "disabled" }` — sintaxe oficial
- *   do DeepSeek V4. Sem isso o modelo gasta tokens em reasoning interno
- *   (vide `reasoning_content` na resposta) e a chamada fica MUITO mais lenta.
- *   https://api-docs.deepseek.com/guides/thinking_mode
- * - força JSON via `response_format: { type: "json_object" }`
- * - logs ao vivo no console (cada chunk delta) para depuração
+ * Cliente OpenAI-compatible (OpenRouter como gateway):
+ *  - streaming SSE (`stream: true`).
+ *  - força JSON via `response_format: { type: "json_object" }`.
+ *  - reasoning configurável via `reasoning: { effort: "minimal"|"low"|"medium"|"high" }`
+ *    — quem decide é o caller (matcher pede medium, classify pede low).
+ *  - cabeçalhos opcionais HTTP-Referer e X-Title pra atribuição no ranking
+ *    público do OpenRouter.
+ *  - logs ao vivo no console (cada chunk delta) para depuração.
  *
- * Retorna o conteúdo acumulado já como string JSON pronta para parsing.
+ * Funciona para qualquer modelo OpenAI-compat hospedado pelo OpenRouter
+ * (Gemini, Claude, GPT, Llama). O `reasoning.effort` é traduzido pelo
+ * próprio OpenRouter para o param nativo do provider — em Gemini vira
+ * `thinkingLevel`, em Claude `thinking.budget_tokens`, em DeepSeek o
+ * próprio `thinking`.
+ *
+ * Referência: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
  */
+
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
 
 export interface LLMStreamOptions {
   apiKey: string;
-  baseUrl: string;            // ex.: "https://api.deepseek.com"
+  baseUrl: string;            // ex.: "https://openrouter.ai/api/v1"
   model: string;
   systemPrompt: string;
   userMessage: string;
   maxTokens?: number;
+  reasoningEffort?: ReasoningEffort;
   /** Prefixo no console.log dos chunks (ex.: "[classify]", "[match]"). */
   logTag: string;
+  /** Atribuição pública (opcional, sem efeito em chamadas privadas). */
+  httpReferer?: string;
+  appTitle?: string;
 }
 
 interface OpenAICompatStreamChunk {
@@ -27,6 +39,7 @@ interface OpenAICompatStreamChunk {
     delta?: {
       content?: string;
       reasoning_content?: string;
+      reasoning?: string;
     };
     finish_reason?: string | null;
   }>;
@@ -42,7 +55,10 @@ export async function callOpenAICompatJSONStream(
     systemPrompt,
     userMessage,
     maxTokens = 16000,
+    reasoningEffort,
     logTag,
+    httpReferer,
+    appTitle,
   } = opts;
 
   // eslint-disable-next-line no-console
@@ -50,40 +66,49 @@ export async function callOpenAICompatJSONStream(
     baseUrl,
     model,
     maxTokens,
+    reasoningEffort: reasoningEffort ?? '(default do provider)',
     promptChars: userMessage.length,
   });
 
   const url = baseUrl.replace(/\/$/, '') + '/chat/completions';
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json; charset=utf-8',
+    Authorization: `Bearer ${apiKey}`,
+    Accept: 'text/event-stream',
+  };
+  if (httpReferer) headers['HTTP-Referer'] = httpReferer;
+  if (appTitle) headers['X-Title'] = appTitle;
+
+  const body: Record<string, unknown> = {
+    model,
+    temperature: 0,
+    max_tokens: maxTokens,
+    stream: true,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage },
+    ],
+  };
+  if (reasoningEffort) {
+    body.reasoning = { effort: reasoningEffort };
+  }
+
   const resp = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      Authorization: `Bearer ${apiKey}`,
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      max_tokens: maxTokens,
-      stream: true,
-      response_format: { type: 'json_object' },
-      thinking: { type: 'disabled' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-    }),
+    headers,
+    body: JSON.stringify(body),
   });
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
     // eslint-disable-next-line no-console
     console.error(`${logTag} ✗ HTTP ${resp.status}`, errText.slice(0, 600));
-    throw new Error(`DeepSeek HTTP ${resp.status}: ${errText.slice(0, 240)}`);
+    throw new Error(`OpenRouter HTTP ${resp.status}: ${errText.slice(0, 240)}`);
   }
   if (!resp.body) {
-    throw new Error('DeepSeek retornou sem body para streaming.');
+    throw new Error('OpenRouter retornou sem body para streaming.');
   }
 
   const reader = resp.body.getReader();

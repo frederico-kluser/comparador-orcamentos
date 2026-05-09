@@ -34,8 +34,9 @@ export default function App() {
       <main className="app-main">
         {!llmOk && (
           <div className="banner-warn">
-            ⚠️ <code>VITE_DEEPSEEK_API_KEY</code> não configurada — sem LLM,
+            ⚠️ <code>VITE_OPENROUTER_API_KEY</code> não configurada — sem LLM,
             os documentos não podem ser classificados nem correlacionados.
+            Pegue sua chave em <code>https://openrouter.ai/keys</code>.
           </div>
         )}
         {error && (

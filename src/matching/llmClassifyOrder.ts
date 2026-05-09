@@ -3,6 +3,7 @@ import { callOpenAICompatJSONStream } from './llmStream';
 import { CLASSIFY_ORDER_SYSTEM_PROMPT } from './prompts';
 import { chunkText } from './chunkText';
 import { runWithLimit } from '../lib/concurrency';
+import { getOpenRouterConfig } from './openRouterConfig';
 
 /**
  * Stage 1 da LISTA MESTRE: recebe o texto bruto do .docx/.pdf/.txt/.xlsx do
@@ -37,15 +38,7 @@ export async function classifyOrderLLM(
   rawText: string,
   fileName: string
 ): Promise<OrderClassifyResponse> {
-  const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY;
-  const baseUrl = import.meta.env.VITE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-  const model = import.meta.env.VITE_DEEPSEEK_MODEL_CLASSIFY || 'deepseek-v4-flash';
-
-  if (!apiKey || apiKey.includes('xxxxxxxx')) {
-    throw new Error(
-      'VITE_DEEPSEEK_API_KEY não configurada. Crie um .env com base em .env.example.'
-    );
-  }
+  const cfg = getOpenRouterConfig();
 
   const chunks = chunkText(rawText, CHUNK_SIZE, CHUNK_OVERLAP_LINES);
   if (rawText.length > CHUNK_THRESHOLD) {
@@ -68,12 +61,15 @@ export async function classifyOrderLLM(
       `Devolva o JSON {"items":[...]} conforme as regras.`;
 
     const content = await callOpenAICompatJSONStream({
-      apiKey,
-      baseUrl,
-      model,
+      apiKey: cfg.apiKey,
+      baseUrl: cfg.baseUrl,
+      model: cfg.model,
       systemPrompt: CLASSIFY_ORDER_SYSTEM_PROMPT,
       userMessage,
       maxTokens: 16000,
+      reasoningEffort: 'low', // limpeza estruturada — reasoning leve já basta
+      httpReferer: cfg.httpReferer,
+      appTitle: cfg.appTitle,
       logTag: `[classify-order${chunk.total > 1 ? `:${chunk.index + 1}/${chunk.total}` : ''}]`,
     });
 

@@ -3,6 +3,7 @@ import type { PurchaseOrder, RankedProposal, SupplierQuote } from '../types';
 import { buildComparison } from './calculator';
 import { callOpenAICompatJSONStream } from '../matching/llmStream';
 import { RANKING_JUSTIFICATION_SYSTEM_PROMPT } from '../matching/prompts';
+import { getOpenRouterConfig, isLLMConfigured } from '../matching/openRouterConfig';
 import { z } from 'zod';
 
 /**
@@ -86,10 +87,6 @@ export async function generateRankingJustifications(
 ): Promise<string[]> {
   if (ranking.length === 0) return [];
 
-  const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY;
-  const baseUrl = import.meta.env.VITE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-  const model = import.meta.env.VITE_DEEPSEEK_MODEL_MATCH || 'deepseek-v4-pro';
-
   const propostas = ranking.map((r) => ({
     rank: r.rank,
     supplier: r.supplierName,
@@ -103,16 +100,20 @@ export async function generateRankingJustifications(
 
   const fallback = ranking.map((r) => fallbackJustificativa(r));
 
-  if (!apiKey || apiKey.includes('xxxxxxxx')) return fallback;
+  if (!isLLMConfigured()) return fallback;
 
   try {
+    const cfg = getOpenRouterConfig();
     const content = await callOpenAICompatJSONStream({
-      apiKey,
-      baseUrl,
-      model,
+      apiKey: cfg.apiKey,
+      baseUrl: cfg.baseUrl,
+      model: cfg.model,
       systemPrompt: RANKING_JUSTIFICATION_SYSTEM_PROMPT,
       userMessage: JSON.stringify({ propostas }),
       maxTokens: 2000,
+      reasoningEffort: 'minimal', // só formata texto a partir de números prontos
+      httpReferer: cfg.httpReferer,
+      appTitle: cfg.appTitle,
       logTag: '[ranking-justify]',
     });
 

@@ -3,6 +3,7 @@ import type { OrderItem } from '../types';
 import { callOpenAICompatJSONStream } from './llmStream';
 import { MATCHER_SYSTEM_PROMPT } from './prompts';
 import { buildMasterIndex, topKCandidates } from './preFilter';
+import { getOpenRouterConfig, isLLMConfigured as orIsLLMConfigured } from './openRouterConfig';
 
 /**
  * Matcher Stage 2 (refac):
@@ -84,17 +85,8 @@ export async function callDocumentMatchLLM(
   unmatchedItems: { id: string; rawTerm: string }[],
   catalogo: OrderItem[]
 ): Promise<DocumentMatchResponse> {
-  const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY;
-  const baseUrl = import.meta.env.VITE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-  const model = import.meta.env.VITE_DEEPSEEK_MODEL_MATCH || 'deepseek-v4-pro';
-
-  if (!apiKey || apiKey.includes('xxxxxxxx')) {
-    throw new Error(
-      'VITE_DEEPSEEK_API_KEY não configurada. Crie um .env com base em .env.example.'
-    );
-  }
-
   if (unmatchedItems.length === 0) return { matches: [] };
+  const cfg = getOpenRouterConfig();
 
   // Pré-filtro: para cada item, top-10 candidatos da master
   const fuseIndex = buildMasterIndex(catalogo);
@@ -125,12 +117,15 @@ export async function callDocumentMatchLLM(
     `\n\nResponda em JSON {"matches":[...]} com UM objeto por itemId acima, na mesma ordem.`;
 
   const content = await callOpenAICompatJSONStream({
-    apiKey,
-    baseUrl,
-    model,
+    apiKey: cfg.apiKey,
+    baseUrl: cfg.baseUrl,
+    model: cfg.model,
     systemPrompt: MATCHER_SYSTEM_PROMPT,
     userMessage,
     maxTokens: Math.max(4000, Math.min(32000, 800 + unmatchedItems.length * 400)),
+    reasoningEffort: 'medium', // matcher se beneficia de CoT — extrai specs antes de decidir
+    httpReferer: cfg.httpReferer,
+    appTitle: cfg.appTitle,
     logTag: '[match]',
   });
 
@@ -171,9 +166,6 @@ export async function callDocumentMatchLLM(
   return { matches: cleaned };
 }
 
-export function isLLMConfigured(): boolean {
-  const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY;
-  return !!apiKey && !apiKey.includes('xxxxxxxx');
-}
+export const isLLMConfigured = orIsLLMConfigured;
 
 export const LLM_AUTO_CONFIDENCE_THRESHOLD = LLM_AUTO_CONFIDENCE;

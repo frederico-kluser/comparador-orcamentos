@@ -9,7 +9,7 @@ Suba a **ordem de compra** (`.docx`, `.doc` ou `.txt`) e as **notas/orçamentos*
 ```bash
 npm install
 cp .env.example .env
-# edite .env e cole sua chave DeepSeek (https://platform.deepseek.com)
+# edite .env e cole sua chave OpenRouter (https://openrouter.ai/keys)
 npm run dev
 ```
 
@@ -109,16 +109,21 @@ npm run dist:all
 
 ## Aviso de segurança
 
-⚠️ **Esta POC chama a DeepSeek API direto do client** com a chave em `VITE_DEEPSEEK_API_KEY`. Isso **expõe a chave** no bundle JS — aceitável para teste local, mas antes de subir para a Vercel, mover as duas chamadas LLM (`classifyDocumentLLM`, `callDocumentMatchLLM`) para Vercel Serverless Functions lendo `DEEPSEEK_API_KEY` do servidor.
+⚠️ **Esta POC chama o OpenRouter direto do client** com a chave em `VITE_OPENROUTER_API_KEY`. Isso **expõe a chave** no bundle JS — aceitável para teste local, mas antes de subir para a Vercel, mover as chamadas LLM (`classifyOrderLLM`, `classifyDocumentLLM`, `callDocumentMatchLLM`, `generateRankingJustifications`) para Vercel Serverless Functions lendo `OPENROUTER_API_KEY` do servidor.
 
 ## Stack
 
 - React 18 + Vite + TypeScript
-- mammoth (DOCX) · pdfjs-dist (PDF) · TextDecoder (TXT/DOC)
+- mammoth (DOCX) · pdfjs-dist (PDF) · SheetJS Community (XLSX/XLS) · TextDecoder (TXT/CSV/DOC)
 - Dexie.js (IndexedDB cache de matches humanos)
 - Zustand (state)
 - Decimal.js (cálculo monetário)
 - Zod (validação das respostas LLM)
-- DeepSeek API direto (OpenAI-compatible, streaming SSE, `thinking: { type: "disabled" }`)
-  - Classificação: `VITE_DEEPSEEK_MODEL_CLASSIFY` (default `deepseek-v4-flash` — rápido/barato)
-  - Correlação: `VITE_DEEPSEEK_MODEL_MATCH` (default `deepseek-v4-pro` — raciocínio mais forte)
+- fuse.js (pré-filtro lexical pra reduzir candidatos do matcher)
+- OpenRouter (gateway OpenAI-compatible, streaming SSE, prompt caching automático)
+  - Modelo único: `VITE_OPENROUTER_MODEL` (default `google/gemini-3-flash-preview` — Gemini 3 Flash Preview, contexto 1,05M tokens, reasoning embutido)
+  - Esforço de reasoning configurável por caller via `reasoning.effort`:
+    - matcher: `medium` (CoT pra extração de specs antes de decidir)
+    - classify (proposta + master): `low` (extração estruturada)
+    - ranking-justify: `minimal` (só formata texto a partir de números prontos)
+  - Documentos longos (>100k chars) são processados em CHUNKS paralelos com overlap pra garantir que TODO o conteúdo passe pela LLM, sem cortar o meio.
